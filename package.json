@@ -1,0 +1,23 @@
+{
+  "name": "video-ai-assistant",
+  "version": "0.1.0",
+  "description": "口播视频自动化：脚本加分镜、配音、画面、合成导出（基于 electron-app-template）",
+  "main": "boot/bootstrap.js",
+  "private": true,
+  "license": "MIT",
+  "author": "keovio",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.js",
+    "test": "node --test \"test/*.test.js\"",
+    "pack": "electron-builder --config electron-builder.config.js --dir --publish never",
+    "dist": "electron-builder --config electron-builder.config.js --publish never",
+    "smoke": "node scripts/smoke.js",
+    "build:layer": "node build/build-layer.js"
+  },
+  "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "electron": "^44.10.0",
+    "electron-builder": "^26.0.12"
+  }
+}

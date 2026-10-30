@@ -1,0 +1,12 @@
+{
+  "appName": "video-ai-assistant",
+  "productName": "视频AI助手",
+  "appId": "com.keovio.videoaiassistant",
+  "repo": "keovio/video-ai-assistant",
+  "tagPrefix": "v",
+  "channelTag": "latest-layer",
+  "mirrors": [
+    "",
+    "https://ghfast.top/"
+  ]
+}

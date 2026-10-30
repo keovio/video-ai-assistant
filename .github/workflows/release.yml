@@ -1,0 +1,157 @@
+name: Release
+# 推送 tag（<tagPrefix><版本号>，默认 v1.2.3）→ 三个系统分别打安装包 + 构建一份通用增量包 → 创建 GitHub Release 并上传 →
+# 更新增量通道（app.config.json 的 channelTag，默认 latest-layer）。
+# 注意：下面的 tags 触发规则不能读配置文件，改了 tagPrefix 要同步改这里。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 解析版本号
+        id: v
+        run: |
+          set -euo pipefail
+          V="$(node scripts/release-tools.js version-from-tag "$GITHUB_REF_NAME")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "版本 $V"
+
+  build:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac --arm64 --x64
+            files: release/*.dmg
+          - os: windows-latest
+            target: --win --x64
+            files: release/*.exe
+          - os: ubuntu-latest
+            target: --linux --x64
+            files: release/*.AppImage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      V: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装依赖
+        run: npm ci
+      - name: 检查与测试
+        run: |
+          npm run check
+          npm test
+      - name: 写入版本号
+        run: npm pkg set version="$V"
+      - name: 打安装包
+        run: npm run dist -- ${{ matrix.target }}
+      - name: 列出产物
+        run: ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ runner.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 7
+
+  layer:
+    needs: meta
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装依赖
+        run: npm ci
+      - name: 构建增量包（与系统无关，一份服务三个系统）
+        run: |
+          set -euo pipefail
+          npm pkg set version="$V"
+          NOTES="$(head -n1 update-notes.txt 2>/dev/null || true)"; [ -n "$NOTES" ] || NOTES="$(git log -1 --pretty=%s)"
+          npm run build:layer -- --version "$V" --installer-version "$V" --out layer --notes "$NOTES"
+          node scripts/release-tools.js verify-layer layer "$V"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: layer
+          path: layer/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [meta, build, layer]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      V: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 校验产物
+        run: |
+          set -euo pipefail
+          ls -la dist
+          node scripts/release-tools.js expect-installers dist "$V"
+          node scripts/release-tools.js verify-layer dist "$V"
+      - name: 创建 Release 并上传
+        run: |
+          set -euo pipefail
+          NAME="$(node scripts/release-tools.js config productName)"
+          {
+            echo "## ${NAME} ${V}"
+            echo
+            echo "$(head -n1 update-notes.txt 2>/dev/null || true)"
+            echo
+            echo "- macOS：下载 \`-mac-arm64.dmg\`（Apple 芯片）或 \`-mac-x64.dmg\`（Intel），打开后拖进「应用程序」。应用未经 Apple 公证，首次打开到「系统设置 › 隐私与安全性」点「仍要打开」"
+            echo "- Windows：下载 \`-win-x64.exe\` 安装"
+            echo "- Linux：下载 \`.AppImage\`，\`chmod +x\` 后运行"
+            echo "- 已安装旧版本：打开应用会自动下载增量更新，点「重启生效」即可"
+            echo "- \`app-update.asar\` / \`app-update.json\` 是应用内更新用的，不用手动下载"
+          } > notes.md
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "${NAME} ${V}" --notes-file notes.md --verify-tag
+          gh release upload "$TAG" dist/*.dmg dist/*.exe dist/*.AppImage dist/app-update.asar dist/app-update.json --clobber
+      - name: 更新增量通道
+        run: |
+          set -euo pipefail
+          CH="$(node scripts/release-tools.js config channelTag)"
+          gh release view "$CH" >/dev/null 2>&1 || gh release create "$CH" --title "增量更新通道（自动维护，请勿下载）" \
+            --notes "这个发布只存放最新版本的 app-update.json，供应用内更新在 GitHub API 不可用时使用。安装包请到对应版本的发布页下载。" --prerelease --latest=false
+          gh release download "$CH" -p app-update.json -O current.json 2>/dev/null || true
+          if node scripts/release-tools.js channel-ok current.json "$V"; then
+            gh release upload "$CH" dist/app-update.json --clobber
+          else
+            echo "::warning::通道里已有更新的版本，本次不覆盖通道（应用仍能通过 GitHub API 找到各版本）"
+          fi
+      - name: 下载回来再校验
+        run: |
+          set -euo pipefail
+          mkdir -p chk && gh release download "$TAG" -p app-update.asar -p app-update.json -D chk
+          node scripts/release-tools.js verify-layer chk "$V"
+          echo "RELEASE OK $TAG"

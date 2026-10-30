@@ -1,0 +1,71 @@
+name: Publish Layer
+# 只发布增量更新（不打安装包）：
+#   1. 本地 npm run build:layer -- --version <版本> --installer-version <最近一次完整发布的版本> --out layer
+#   2. 把 layer/ 提交到分支 layer/<tag>（例如 layer/v1.2.4）并推送
+#   3. 在 Actions 里手动运行本流程，填版本号
+# 本流程会校验 sha256 / 大小 / 版本 / 下载地址，上传到 Release <tag>（没有就创建）和增量通道，再下载回来校验一遍。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带前缀，例如 1.2.4）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      V: ${{ github.event.inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 取出分支 layer/<tag> 里的增量包
+        id: src
+        run: |
+          set -euo pipefail
+          TAG="$(node scripts/release-tools.js tag "$V")"
+          BRANCH="layer/$TAG"
+          git fetch --depth=1 origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || { echo "::error::找不到分支 $BRANCH"; exit 1; }
+          git checkout "origin/$BRANCH" -- layer
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          ls -la layer
+      - name: 校验增量包
+        run: node scripts/release-tools.js verify-layer layer "$V"
+      - name: 上传到 Release
+        env:
+          TAG: ${{ steps.src.outputs.tag }}
+        run: |
+          set -euo pipefail
+          NAME="$(node scripts/release-tools.js config productName)"
+          node -p 'require("./layer/app-update.json").notes || ""' > notes.md
+          printf '\n这是增量更新：已安装的应用会自动下载。新安装请到最近一次带安装包的发布页下载。\n' >> notes.md
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "${NAME} ${V}（增量更新）" --notes-file notes.md --target "$GITHUB_SHA"
+          gh release upload "$TAG" layer/app-update.asar layer/app-update.json --clobber
+      - name: 更新增量通道
+        run: |
+          set -euo pipefail
+          CH="$(node scripts/release-tools.js config channelTag)"
+          gh release view "$CH" >/dev/null 2>&1 || gh release create "$CH" --title "增量更新通道（自动维护，请勿下载）" \
+            --notes "这个发布只存放最新版本的 app-update.json，供应用内更新在 GitHub API 不可用时使用。" --prerelease --latest=false
+          gh release download "$CH" -p app-update.json -O current.json 2>/dev/null || true
+          node scripts/release-tools.js channel-ok current.json "$V"
+          gh release upload "$CH" layer/app-update.json --clobber
+      - name: 下载回来再校验
+        env:
+          TAG: ${{ steps.src.outputs.tag }}
+        run: |
+          set -euo pipefail
+          CH="$(node scripts/release-tools.js config channelTag)"
+          mkdir -p chk && gh release download "$TAG" -p app-update.asar -p app-update.json -D chk
+          node scripts/release-tools.js verify-layer chk "$V"
+          gh release download "$CH" -p app-update.json -O chk/latest.json --clobber
+          node -e 'const a=require("./chk/app-update.json"),b=require("./chk/latest.json");if(a.sha256!==b.sha256||b.version!==process.env.V)throw new Error("通道与发布不一致");console.log("PUBLISHED OK",b.version,b.sha256)'

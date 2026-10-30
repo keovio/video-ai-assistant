@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>应用</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 背景层：预设渐变 / 自定义图片 + 遮罩 -->
+  <div id="bg" aria-hidden="true"><div id="bg-dim"></div></div>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" id="brand-mark">A</div>
+        <div class="brand-text">
+          <div class="brand-name" id="app-name">&nbsp;</div>
+          <div class="brand-ver"><span id="app-version">&nbsp;</span><span id="app-source" class="tag" hidden></span></div>
+        </div>
+      </div>
+      <nav id="nav" aria-label="主导航"></nav>
+      <div class="side-foot">
+        <button id="task-indicator" class="task-indicator" hidden title="后台任务">
+          <span class="ti-label" id="task-indicator-label"></span>
+          <span class="ti-track"><span class="ti-bar" id="task-indicator-bar"></span></span>
+        </button>
+        <div class="side-tools">
+          <button id="btn-logdock" class="tool-btn" title="运行日志（Ctrl/⌘ + L）" aria-label="运行日志" aria-pressed="false"><span class="tool-dot" hidden></span></button>
+          <button id="btn-collapse" class="collapse-btn" title="折叠侧边栏（Ctrl/⌘ + B）" aria-label="折叠侧边栏"></button>
+        </div>
+      </div>
+    </aside>
+    <div id="resizer" title="拖动调整宽度，双击折叠/展开" role="separator" aria-orientation="vertical"></div>
+    <main id="main"></main>
+    <div id="dock-resizer" title="拖动调整宽度，双击收起" role="separator" aria-orientation="vertical" hidden></div>
+    <aside id="logdock" aria-label="运行日志" hidden></aside>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+
+  <!-- 外壳核心：先加载 -->
+  <script src="shell/shell.js"></script>
+  <script src="shell/logview.js"></script>
+  <!-- 你的页面：在 pages/ 里新建文件，在这里加一行 script 即可出现在导航里 -->
+  <script src="pages/home.js"></script>
+  <script src="pages/projects.js"></script>
+  <script src="pages/editor.js"></script>
+  <script src="pages/video-settings.js"></script>
+  <!-- 内置页面（任务 / 日志 / 设置） -->
+  <script src="shell/pages/tasks.js"></script>
+  <script src="shell/pages/logs.js"></script>
+  <script src="shell/pages/settings.js"></script>
+  <!-- 最后启动 -->
+  <script src="shell/boot.js"></script>
+</body>
+</html>

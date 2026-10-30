@@ -1,0 +1,48 @@
+name: CI
+# 每次推送 / PR：三个系统上安装依赖、语法检查、单元测试、打未打包的应用，并真实启动一次（--smoke-test）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest   # Apple 芯片
+            arch: arm64
+          - os: windows-latest
+            arch: x64
+          - os: ubuntu-latest
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装依赖
+        run: npm ci
+      - name: 语法检查
+        run: npm run check
+      - name: 单元测试
+        run: npm test
+      - name: 构建增量包（检查能否生成）
+        run: npm run build:layer -- --out "$RUNNER_TEMP/layer"
+      - name: 打包（未打包目录，不做安装包）
+        run: npm run pack -- --${{ matrix.arch }}
+      - name: Linux 准备虚拟显示
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
+      - name: 冒烟测试（真实启动应用）
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run smoke; else npm run smoke; fi
