@@ -32,6 +32,8 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci
+      - name: 安装 ffmpeg（真实渲染与音频时长测试需要）
+        run: bash scripts/ci-install-ffmpeg.sh
       - name: 语法检查
         run: npm run check
       - name: 单元测试

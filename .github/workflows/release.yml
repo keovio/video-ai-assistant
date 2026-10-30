@@ -56,6 +56,8 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci
+      - name: 安装 ffmpeg（真实渲染与音频时长测试需要）
+        run: bash scripts/ci-install-ffmpeg.sh
       - name: 检查与测试
         run: |
           npm run check
@@ -135,7 +137,12 @@ jobs:
             echo "- 已安装旧版本：打开应用会自动下载增量更新，点「重启生效」即可"
             echo "- \`app-update.asar\` / \`app-update.json\` 是应用内更新用的，不用手动下载"
           } > notes.md
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "${NAME} ${V}" --notes-file notes.md --verify-tag
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # 已存在的 Release（例如手动建的空壳）也要补上说明，失败只警告、不影响上传安装包
+            gh release edit "$TAG" --title "${NAME} ${V}" --notes-file notes.md || echo "::warning::Release 说明更新失败，安装包继续上传"
+          else
+            gh release create "$TAG" --title "${NAME} ${V}" --notes-file notes.md --verify-tag
+          fi
           gh release upload "$TAG" dist/*.dmg dist/*.exe dist/*.AppImage dist/app-update.asar dist/app-update.json --clobber
       - name: 更新增量通道
         run: |
