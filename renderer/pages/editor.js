@@ -1,6 +1,5 @@
 "use strict";
-// 分镜编辑器（M1）：编辑标题/标签、逐镜改口播与画面描述、增删与排序、保存后重开还在。
-// 配音/生图/合成是 M2/M3 的事：按钮置灰并标注，不做假功能。
+// 分镜编辑器（M1 存储与编辑；M2 增加配音：生成、导入、试听、清除；M3 增加画面状态，片段生成与合成在“合成导出”页）。
 (function () {
   const { h, card, modules } = window.Shell;
   const api = window.app;
@@ -9,6 +8,8 @@
   let draft = null; // { project: {...}, shots: [...] }，shots 里 _new 表示未保存的新镜头
   let deletedIds = [];
   let newSeq = 0;
+  let currentAudio = null;
+  let currentListenBtn = null;
 
   const estimate = (text) => {
     const n = [...String(text || "")].filter((c) => !/\s/.test(c)).length;
@@ -16,6 +17,22 @@
   };
   const fmt = (s) => (Math.round(Number(s || 0) * 10) / 10) + " 秒";
   const fmtRange = (start, end) => `${fmt(start)} – ${fmt(end)}`;
+  // 某镜的计时用时长：已挂配音且有秒数时用该秒数（实测或估算见 audioMeasured），否则字数估算
+  const shotSeconds = (s) => (s.audioAssetId && Number(s.audioSeconds) > 0
+    ? Math.round(Number(s.audioSeconds) * 10) / 10 : estimate(s.narration));
+  const audioText = (s) => {
+    if (!s.audioAssetId) return s.error ? `配音：失败（${s.error}）` : "配音：暂无，请生成或导入音频";
+    const src = s.audioSource === "import" ? "导入" : "TTS 生成";
+    const how = s.audioMeasured ? "实测" : "估算（未检测到 ffprobe）";
+    return `配音：${src} · ${how} ${fmt(s.audioSeconds)}`;
+  };
+  const videoText = (s) => (s.videoAssetId
+    ? `画面：片段已挂（${s.clipSeconds ? fmt(s.clipSeconds) : "时长未知"}），合成时按配音时长对齐（短了循环、长了截断）`
+    : "画面：暂无片段，合成时该镜用黑场兜底，配音保留；去“合成导出”页生成或导入片段");
+  const stopListen = () => {
+    if (currentAudio) { try { currentAudio.pause(); } catch { /* ignore */ } currentAudio = null; }
+    if (currentListenBtn) { currentListenBtn.textContent = "试听"; currentListenBtn = null; }
+  };
 
   async function unwrap(r) {
     if (!r || !r.ok) throw new Error((r && r.error) || "操作失败");
@@ -25,7 +42,7 @@
   function timings(shots) {
     let t = 0;
     return shots.map((s) => {
-      const d = estimate(s.narration);
+      const d = shotSeconds(s);
       const start = Math.round(t * 10) / 10;
       t = Math.round((t + d) * 10) / 10;
       return { start, end: t, seconds: d };
@@ -64,6 +81,7 @@
   }
 
   async function load(root, id) {
+    stopListen();
     const r = await unwrap(await api.video.projects.get(id));
     draft = { project: { ...r.project }, shots: r.shots.map((s) => ({ ...s })) };
     deletedIds = [];
@@ -84,7 +102,7 @@
 
     const redraw = () => {
       const ts = timings(draft.shots);
-      totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 预估总时长 ${fmt(ts.length ? ts[ts.length - 1].end : 0)}（按约 4.5 字/秒估算）`;
+      totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 总时长 ${fmt(ts.length ? ts[ts.length - 1].end : 0)}（有配音的镜头按配音时长，无配音的按约 4.5 字/秒估算）`;
       shotsBox.textContent = "";
       draft.shots.forEach((s, i) => {
         const t = ts[i];
@@ -102,17 +120,35 @@
             h("button", { class: "btn small", disabled: i === 0, onclick: () => { move(i, -1); } }, "上移"),
             h("button", { class: "btn small", disabled: i === draft.shots.length - 1, onclick: () => { move(i, 1); } }, "下移"),
             h("button", { class: "btn small danger-ghost", onclick: () => { removeShot(i); } }, "删除")),
-          h("p", { class: "card-desc" }, "口播（预估 " + fmt(t.seconds) + "）"),
+          h("p", { class: "card-desc" }, "口播（" + fmt(t.seconds) + "）"),
           narration,
           h("p", { class: "card-desc" }, "画面描述"),
           visual,
           h("p", { class: "card-desc" }, "生图提示词"),
           imagePrompt);
+        const listenBtn = h("button", { class: "btn small", disabled: !s.audioAssetId, onclick: () => listenShot(s, listenBtn) }, "试听");
+        const genBtn = h("button", { class: "btn small", onclick: () => generateShot(s, genBtn) }, "生成配音");
+        const importInput = h("input", { type: "file", accept: ".mp3,.wav,.m4a,.ogg,.flac,.aac,.opus,audio/*", hidden: true,
+          onchange: async () => { const f = importInput.files && importInput.files[0]; if (!f) return; await importShot(s, f); importInput.value = ""; } });
+        const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入音频");
+        const clearBtn = h("button", { class: "btn small danger-ghost", disabled: !s.audioAssetId,
+          onclick: async () => {
+            if (!needSaved(s)) return;
+            const r = await api.video.shots.clearAudio(s.id);
+            if (r.ok) { window.Shell.toast("已清除该镜头配音"); await load(root, currentId); }
+            else window.Shell.toast(r.error || "清除失败", "error");
+          } }, "清除配音");
+        row.append(
+          h("p", { class: "card-desc" }, "配音"),
+          h("p", { class: "muted" }, "", audioText(s)),
+          h("div", { class: "actions" }, genBtn, importBtn, listenBtn, clearBtn, importInput),
+          h("p", { class: "card-desc" }, "画面"),
+          h("p", { class: "muted" }, "", videoText(s)));
         shotsBox.append(row);
       });
       function redrawTotals() {
         const ts2 = timings(draft.shots);
-        totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 预估总时长 ${fmt(ts2.length ? ts2[ts2.length - 1].end : 0)}（按约 4.5 字/秒估算）`;
+        totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 总时长 ${fmt(ts2.length ? ts2[ts2.length - 1].end : 0)}（有配音的镜头按配音时长，无配音的按约 4.5 字/秒估算）`;
         // 只更新每镜的时间标签，不重建输入框，避免打字时丢焦点
         [...shotsBox.querySelectorAll(".shot-row")].forEach((rowEl, idx) => {
           const tag = rowEl.querySelector(".card-tag");
@@ -132,6 +168,62 @@
       if (s && !s._new && s.id) deletedIds.push(s.id);
       redraw();
     };
+    // ---- M2 配音操作：都需要已保存的镜头（未保存的新镜头没有服务端 id） ----
+    const needSaved = (s) => {
+      if (s._new || !s.id) { window.Shell.toast("请先点“保存”，再操作配音", "error"); return false; }
+      return true;
+    };
+    const generateShot = async (s, btn) => {
+      if (!needSaved(s)) return;
+      if (!String(s.narration || "").trim()) { window.Shell.toast("这镜没有口播文案，无法生成配音", "error"); return; }
+      const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
+      try {
+        const r = await api.video.shots.generateAudio(s.id);
+        if (!r.ok) window.Shell.toast(r.error || "生成配音失败", "error");
+        else if (r.warning) window.Shell.toast("配音已生成，但时长是估算值：" + r.warning, "error");
+        else window.Shell.toast("配音已生成（实测 " + fmt(r.seconds) + "）", "success");
+        await load(root, currentId);
+      } catch (e) { window.Shell.toast(e.message, "error"); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    };
+    const importShot = async (s, file) => {
+      if (!needSaved(s)) return;
+      try {
+        const data = await file.arrayBuffer();
+        const r = await api.video.shots.importAudio(s.id, { name: file.name, data });
+        if (!r.ok) window.Shell.toast(r.error || "导入音频失败", "error");
+        else if (r.warning) window.Shell.toast("音频已导入，但时长是估算值：" + r.warning, "error");
+        else window.Shell.toast("音频已导入（实测 " + fmt(r.seconds) + (r.deduped ? "，与已有音频内容相同，已复用" : "") + "）", "success");
+        await load(root, currentId);
+      } catch (e) { window.Shell.toast(e.message, "error"); }
+    };
+    const listenShot = async (s, btn) => {
+      if (currentListenBtn === btn) { stopListen(); return; }
+      stopListen();
+      const r = await api.video.shots.audioData(s.id);
+      if (!r.ok) { window.Shell.toast(r.error || "试听失败", "error"); return; }
+      const audio = new Audio(r.dataUrl);
+      currentAudio = audio; currentListenBtn = btn; btn.textContent = "停止";
+      audio.onended = () => stopListen();
+      audio.onerror = () => { stopListen(); window.Shell.toast("音频播放失败", "error"); };
+      try { await audio.play(); }
+      catch (e) { stopListen(); window.Shell.toast("音频播放失败：" + e.message, "error"); }
+    };
+    const generateAll = async (btn) => {
+      if (draft.shots.some((s) => s._new)) { window.Shell.toast("有未保存的新镜头，请先点“保存”", "error"); return; }
+      const ids = draft.shots.filter((s) => String(s.narration || "").trim()).map((s) => s.id);
+      if (!ids.length) { window.Shell.toast("没有可生成配音的口播文案", "error"); return; }
+      const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
+      let done = 0, failed = 0;
+      try {
+        for (const id of ids) {
+          const r = await api.video.shots.generateAudio(id);
+          if (r.ok) done++; else failed++;
+        }
+        window.Shell.toast(failed ? `配音生成完成：成功 ${done} 镜，失败 ${failed} 镜（失败原因写在对应镜头下）` : `配音已生成 ${done} 镜`, failed ? "error" : "success");
+        await load(root, currentId);
+      } finally { btn.disabled = false; btn.textContent = old; }
+    };
 
     body.append(
       h("header", { class: "page-head" },
@@ -143,9 +235,9 @@
         h("div", { class: "actions" },
           h("button", { class: "btn primary", id: "btn-save", onclick: save }, "保存"),
           h("button", { class: "btn", onclick: async () => { await load(root, currentId); window.Shell.toast("已放弃未保存的改动"); } }, "放弃改动"),
-          h("button", { class: "btn", disabled: true, title: "M2 做" }, "生成配音（M2）"),
-          h("button", { class: "btn", disabled: true, title: "M3 做" }, "生成画面（M3）"),
-          h("button", { class: "btn", disabled: true, title: "M3 做" }, "合成导出（M3）")))),
+          h("button", { class: "btn", id: "btn-voice-all", onclick: (e) => generateAll(e.currentTarget) }, "生成配音"),
+          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "去合成导出"),
+          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "即梦片段与合成")))),
       shotsBox,
       h("div", { class: "actions" },
         h("button", { class: "btn", onclick: () => { draft.shots.push({ _new: true, _tmp: "new-" + (++newSeq), narration: "", visual: "", imagePrompt: "", status: "pending" }); redraw(); } }, "＋ 添加镜头")));

@@ -7,7 +7,7 @@
 //   --app-gpu      macOS 上恢复显卡加速（默认关闭，见下）
 //   --smoke-test   CI 冒烟测试：打开窗口、检查页面和预加载接口后退出（退出码 0 = 通过）
 const electron = require("electron");
-const { app, BrowserWindow, ipcMain, shell, net, nativeTheme } = electron;
+const { app, BrowserWindow, ipcMain, shell, net, nativeTheme, safeStorage } = electron;
 const path = require("path");
 const fs = require("fs");
 const { loadConfig } = require("./lib/config");
@@ -19,6 +19,7 @@ const { createTaskManager } = require("./lib/tasks");
 const { setupShellIpc } = require("./lib/shell-ipc");
 const { createVideoStore } = require("./lib/video-store");
 const { setupVideoIpc } = require("./lib/video-ipc");
+const { createSecretsStore } = require("./lib/video/secrets");
 
 const config = loadConfig(__dirname);
 const TIMEOUT_MS = 25000; // 所有页面加载 / 网络请求的超时上限
@@ -46,10 +47,15 @@ const DATA_DIR = process.env.APP_DATA_DIR || app.getPath("userData");
 // 自己的设置项加在这里，例如 { ...BASE_SCHEMA, exportDir: { type: "string", default: "" } }
 const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), schema: {
   ...BASE_SCHEMA,
-  // 视频默认值（M1：新建项目时用；配音/生图/合成设置在 M2/M3 加）
+  // 视频默认值（M1：新建项目时用）与配音设置（M2：服务商/音色/语速/服务地址/模型）
   videoDefaultDuration: { type: "number", min: 10, max: 300, step: 1, default: 75 },
   videoDefaultShotCount: { type: "number", min: 1, max: 12, step: 1, default: 6 },
   videoAspect: { type: "enum", values: ["9:16", "16:9", "1:1"], default: "9:16" },
+  ttsProvider: { type: "enum", values: ["openai", "jimeng"], default: "openai" },
+  ttsVoice: { type: "string", maxLength: 64, default: "alloy" },
+  ttsRate: { type: "number", min: 0.5, max: 2, step: 0.05, default: 1 },
+  ttsBaseUrl: { type: "string", maxLength: 500, default: "" },
+  ttsModel: { type: "string", maxLength: 64, default: "tts-1" },
 } });
 const logger = createLogger({ dir: path.join(DATA_DIR, "logs"), level: settings.get("logLevel"), echo: !app.isPackaged || SMOKE });
 const tasks = createTaskManager({ concurrency: 2, logger });
@@ -196,10 +202,46 @@ ipcMain.handle("update:openUrl", (_e, url) => { if (/^https:\/\//.test(String(ur
 setupShellIpc({ electron, settings, logger, tasks, dataDir: DATA_DIR, broadcast, getWindows: () => BrowserWindow.getAllWindows() });
 
 // 视频项目存储（M1）：<数据目录>/data/video/*.json
-const videoStore = createVideoStore(path.join(DATA_DIR, "data", "video"));
+// TTS Key 单独存（M2）：优先 safeStorage 加密，页面只拿到“已设置/末 4 位”，Key 只在主进程发 TTS 请求时用。
+const videoDir = path.join(DATA_DIR, "data", "video");
+const videoStore = createVideoStore(videoDir);
+const ttsSecrets = createSecretsStore({ file: path.join(DATA_DIR, "secrets.json"), safeStorage });
+// TTS 网络请求走 net.fetch（走系统代理），包装成 tts.js 约定的 { ok, status, arrayBuffer, text }。
+const ttsFetch = async (url, opts) => {
+  const res = await net.fetch(url, opts);
+  return { ok: res.ok, status: res.status, arrayBuffer: async () => res.arrayBuffer(), text: async () => res.text() };
+};
+// 即梦内嵌窗口（M3）：持久会话 persist:jimeng，登录一次后保持；
+// 生成与下载仍由用户或 jimeng.js 的自动操作在窗口里完成，主进程不读页面账号密码。
+let jimengWindow = null;
+function createJimengWindow() {
+  if (jimengWindow && !jimengWindow.isDestroyed()) { jimengWindow.show(); jimengWindow.focus(); return jimengWindow; }
+  const win = new BrowserWindow({
+    width: 1200, height: 800, title: "即梦",
+    webPreferences: { partition: "persist:jimeng", contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.on("closed", () => { if (jimengWindow === win) jimengWindow = null; });
+  jimengWindow = win;
+  win.loadURL("https://jimeng.jianying.com").catch((err) => log.error("打开即梦失败：" + err.message));
+  return win;
+}
+
 setupVideoIpc({
-  ipcMain, store: videoStore,
+  ipcMain, store: videoStore, videoDir,
+  createJimengWindow,
+  openPath: (p) => { try { shell.openPath(p); } catch { /* ignore */ } return true; },
   videoDefaults: { defaultShotCount: settings.get("videoDefaultShotCount"), aspect: settings.get("videoAspect") },
+  getTtsSettings: () => ({
+    ttsProvider: settings.get("ttsProvider"), ttsVoice: settings.get("ttsVoice"), ttsRate: settings.get("ttsRate"),
+    ttsBaseUrl: settings.get("ttsBaseUrl"), ttsModel: settings.get("ttsModel"),
+  }),
+  getTtsKey: () => ttsSecrets.get("ttsApiKey"),
+  fetchImpl: ttsFetch,
+  secrets: ttsSecrets,
 });
 
 // ---------------- CI 冒烟测试 ----------------
@@ -240,6 +282,86 @@ function runSmokeTest() {
         videoOk = created.ok && shotRows >= 1 && reopened.ok && reopened.shots.length >= 1 && reopened.project.title === "冒烟项目";
         await a.video.projects.remove(pid);
       } catch (e) { videoOk = false; }
+      // 视频 M2：导入配音（真实 WAV 走 ffprobe 实测）、试听数据、服务商列表、ffmpeg 状态、
+      // 即梦占位报错、编辑器里每镜的配音按钮渲染出来，再删掉（不点文件选择框与真实网络生成）
+      let videoM2Ok = false;
+      try {
+        const created2 = await a.video.projects.create({ title: "冒烟配音" });
+        const pid2 = created2.project.id;
+        const got2 = await a.video.projects.get(pid2);
+        const shotId = got2.shots[0].id;
+        await a.video.shots.update(shotId, { narration: "你好世界" });
+        const wavBuf = (() => {
+          const samples = 8000, buf = new ArrayBuffer(44 + samples * 2), v = new DataView(buf);
+          const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+          ws(0, "RIFF"); v.setUint32(4, 36 + samples * 2, true); ws(8, "WAVE"); ws(12, "fmt ");
+          v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+          v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+          ws(36, "data"); v.setUint32(40, samples * 2, true); return buf;
+        })();
+        const imp = await a.video.shots.importAudio(shotId, { name: "voice.wav", data: wavBuf });
+        const after = await a.video.projects.get(pid2);
+        const shotAfter = after.shots.find((s) => s.id === shotId);
+        const audio = await a.video.shots.audioData(shotId);
+        const providers = await a.video.tts.providers();
+        const ff = await a.video.ffmpeg.status();
+        const jimeng = await a.video.shots.generateAudio(shotId, { provider: "jimeng" });
+        window.VideoApp.openProject(pid2);
+        window.Shell.navigate("editor");
+        for (let i = 0; i < 40 && !document.querySelector("#page-editor .shot-row"); i++) await new Promise((r) => setTimeout(r, 50));
+        const btnTexts = [...document.querySelectorAll("#page-editor .shot-row .btn")].map((b) => b.textContent.trim());
+        videoM2Ok = imp.ok && imp.measured && shotAfter.audioSource === "import" && shotAfter.audioSeconds === 1
+          && audio.ok && audio.dataUrl.startsWith("data:audio/wav;base64,")
+          && providers.providers.some((p) => p.id === "openai") && providers.providers.some((p) => p.id === "jimeng" && !p.automated)
+          && typeof ff.ffmpeg === "boolean" && typeof ff.ffprobe === "boolean"
+          && jimeng.ok === false && /尚未自动接通/.test(jimeng.error)
+          && btnTexts.includes("生成配音") && btnTexts.includes("导入音频") && btnTexts.includes("试听");
+        await a.video.projects.remove(pid2);
+      } catch (e) { videoM2Ok = false; }
+      // 视频 M3：导入 1 秒配音后开始合成（真实系统 ffmpeg），轮询到完成，
+      // 成片与 SRT 路径齐全；合成导出页能打开并显示“开始合成”按钮。
+      // （ffmpeg 缺失时合成应明确失败，冒烟按“失败且错误含 ffmpeg”判定，不谎称成功）
+      let videoM3Ok = false;
+      let videoM3Debug = {};
+      try {
+        const created3 = await a.video.projects.create({ title: "冒烟合成" });
+        const pid3 = created3.project.id;
+        const got3 = await a.video.projects.get(pid3);
+        const shotId3 = got3.shots[0].id;
+        await a.video.shots.update(shotId3, { narration: "你好世界" });
+        const wavBuf3 = (() => {
+          const samples = 8000, buf = new ArrayBuffer(44 + samples * 2), v = new DataView(buf);
+          const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+          ws(0, "RIFF"); v.setUint32(4, 36 + samples * 2, true); ws(8, "WAVE"); ws(12, "fmt ");
+          v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+          v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+          ws(36, "data"); v.setUint32(40, samples * 2, true); return buf;
+        })();
+        const imp3 = await a.video.shots.importAudio(shotId3, { name: "voice.wav", data: wavBuf3 });
+        const ff3 = await a.video.ffmpeg.status();
+        const started = await a.video.renders.start(pid3, { burnSubtitles: false });
+        let rec = null;
+        for (let i = 0; i < 120 && started.ok; i++) {
+          const rs = await a.video.renders.list(pid3);
+          rec = (rs.renders || [])[0] || null;
+          if (rec && (rec.status === "done" || rec.status === "failed")) break;
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        window.VideoApp.openProject(pid3);
+        window.Shell.navigate("render");
+        let renderBtns = [];
+        for (let i = 0; i < 100; i++) {
+          renderBtns = [...document.querySelectorAll("#page-render .btn")].map((b) => b.textContent.trim());
+          if (renderBtns.includes("开始合成")) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        videoM3Ok = imp3.ok && started.ok && !!rec
+          && ((ff3.ok && rec.status === "done" && rec.outputPath.endsWith(".mp4") && rec.srtPath.endsWith(".srt"))
+            || (!ff3.ok && rec.status === "failed" && /ffmpeg/.test(rec.error || "")))
+          && renderBtns.includes("开始合成");
+        videoM3Debug = { imp3: imp3.ok, started: started.ok, startedError: started.error || "", ffOk: ff3.ok, rec: rec ? { status: rec.status, outputPath: rec.outputPath, srtPath: rec.srtPath, error: rec.error, message: rec.message } : null, renderBtns };
+        await a.video.projects.remove(pid3);
+      } catch (e) { videoM3Ok = false; videoM3Debug = { exception: e.message }; }
       // 右侧运行日志面板能打开，外观设置能生效
       window.Shell.toggleLogDock(true);
       window.Shell.saveSettings({ background: "night", fontSize: 15 });
@@ -248,6 +370,7 @@ function runSmokeTest() {
       const look = document.documentElement.dataset.bg === "night" && getComputedStyle(document.body).fontSize === "15px";
       window.Shell.toggleLogDock(false);
       return {
+        videoM3Ok, videoM3Debug,
         api: typeof a === "object" && typeof a.update.check === "function" && typeof a.settings.set === "function",
         nodeHidden: typeof require === "undefined" && typeof process === "undefined",
         name: document.getElementById("app-name").textContent.trim(),
@@ -256,14 +379,14 @@ function runSmokeTest() {
         navs, settingsVisible,
         theme: document.documentElement.dataset.theme || "",
         task: task && task.status,
-        logCount: logs.length, dock, look, videoOk,
+        logCount: logs.length, dock, look, videoOk, videoM2Ok,
         info, source: upd.source,
       };
     })()`, true), TIMEOUT_MS, "页面脚本");
     const result = { ...out, layerVersion: LAYER_VERSION, boot: { source: BOOT.source, version: BOOT.version, bundled: BOOT.bundledVersion, electron: BOOT.electron }, platform: process.platform, rendererErrors: errors };
     const ok = out.api && out.nodeHidden && out.card && out.name === config.productName && out.version.includes(LAYER_VERSION)
-      && ["home", "projects", "editor", "tasks", "logs", "settings"].every((p) => out.navs.includes(p)) && out.settingsVisible
-      && /^(light|dark)$/.test(out.theme) && out.task === "done" && out.logCount > 0 && out.dock && out.look && out.videoOk && !errors.length;
+      && ["home", "projects", "editor", "render", "tasks", "logs", "settings"].every((p) => out.navs.includes(p)) && out.settingsVisible
+      && /^(light|dark)$/.test(out.theme) && out.task === "done" && out.logCount > 0 && out.dock && out.look && out.videoOk && out.videoM2Ok && out.videoM3Ok && !errors.length;
     console.log((ok ? "SMOKE OK " : "SMOKE FAIL ") + JSON.stringify(result));
     clearTimeout(hardStop);
     BOOT.markGood();

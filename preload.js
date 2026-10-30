@@ -61,7 +61,7 @@ contextBridge.exposeInMainWorld("app", {
     relaunch: () => ipcRenderer.invoke("system:relaunch"),
     onThemeUpdated: on("theme:updated"),
   },
-  // 视频项目（M1：存储与分镜编辑；配音/生图/合成在 M2/M3）
+  // 视频项目（M1：存储与分镜编辑；M2：配音生成/导入/试听；M3：即梦片段/合成导出）
   video: {
     projects: {
       list: () => ipcRenderer.invoke("video:projects.list"),
@@ -77,8 +77,28 @@ contextBridge.exposeInMainWorld("app", {
       update: (id, patch) => ipcRenderer.invoke("video:shots.update", id, patch),
       remove: (id) => ipcRenderer.invoke("video:shots.remove", id),
       reorder: (projectId, ids) => ipcRenderer.invoke("video:shots.reorder", projectId, ids),
+      generateAudio: (id, override) => ipcRenderer.invoke("video:shots.generateAudio", id, override),
+      importAudio: (id, file) => ipcRenderer.invoke("video:shots.importAudio", id, file),
+      audioData: (id) => ipcRenderer.invoke("video:shots.audioData", id),
+      clearAudio: (id) => ipcRenderer.invoke("video:shots.clearAudio", id),
+      generateClip: (id) => ipcRenderer.invoke("video:shots.generateClip", id),
+      importVideo: (id, file) => ipcRenderer.invoke("video:shots.importVideo", id, file),
+      clearVideo: (id) => ipcRenderer.invoke("video:shots.clearVideo", id),
     },
     assets: { list: (filter) => ipcRenderer.invoke("video:assets.list", filter) },
-    renders: { list: (projectId) => ipcRenderer.invoke("video:renders.list", projectId) },
+    renders: {
+      list: (projectId) => ipcRenderer.invoke("video:renders.list", projectId),
+      start: (projectId, opts) => ipcRenderer.invoke("video:renders.start", projectId, opts),
+      retry: (renderId) => ipcRenderer.invoke("video:renders.retry", renderId),
+      openFolder: (renderId) => ipcRenderer.invoke("video:renders.openFolder", renderId),
+      openOutput: (renderId) => ipcRenderer.invoke("video:renders.openOutput", renderId),
+    },
+    jimeng: { open: () => ipcRenderer.invoke("video:jimeng.open") },
+    tts: { providers: () => ipcRenderer.invoke("video:tts.providers") },
+    ffmpeg: { status: () => ipcRenderer.invoke("video:ffmpeg.status") },
+    secrets: {
+      status: () => ipcRenderer.invoke("video:secrets.status"),
+      set: (value) => ipcRenderer.invoke("video:secrets.set", value),
+    },
   },
 });

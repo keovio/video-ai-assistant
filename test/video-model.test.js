@@ -63,7 +63,7 @@ test("normalizeProject：默认值、白名单、非法值回退", () => {
   assert.equal(p.aspect, "9:16");
   assert.deepEqual(p.tags, ["a", "b"]);
   assert.equal(p.unknownField, undefined);
-  assert.deepEqual(p.voice, { voice: "v1", rate: 2, bgm: "x.mp3" });
+  assert.deepEqual(p.voice, { ttsProvider: "", voice: "v1", rate: 2, bgm: "x.mp3" });
   assert.equal(p.totalSeconds, 0);
   const p2 = normalizeProject({ title: "T", aspect: "16:9", voice: { rate: 0.1 } });
   assert.equal(p2.aspect, "16:9");
