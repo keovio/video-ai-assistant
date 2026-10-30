@@ -16,6 +16,7 @@ module.exports = {
   publish: null,
   mac: {
     target: [{ target: "dmg", arch: ["arm64", "x64"] }],
+    icon: "build/icon.icns",
     category: "public.app-category.productivity",
     identity: null, // 没有 Apple 证书：afterPack 里做 ad-hoc 签名
     hardenedRuntime: false,
@@ -29,6 +30,7 @@ module.exports = {
   },
   win: {
     target: [{ target: "nsis", arch: ["x64"] }],
+    icon: "build/icon.ico",
     artifactName: `${c.appName}-\${version}-win-x64.\${ext}`,
   },
   nsis: {
@@ -38,6 +40,7 @@ module.exports = {
   },
   linux: {
     target: [{ target: "AppImage", arch: ["x64"] }],
+    icon: "build/icon.png",
     category: "Utility",
     executableName: c.appName,
     artifactName: `${c.appName}-\${version}-linux-x64.\${ext}`,
