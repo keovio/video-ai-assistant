@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld("app", {
     ai: {
       status: () => ipcRenderer.invoke("video:ai.status"),
       setKey: (value) => ipcRenderer.invoke("video:ai.setKey", value),
+      // kind: "ai" | "tts" | "tts-local" → { ok, models: [id…] }
+      models: (kind) => ipcRenderer.invoke("video:ai.models", kind),
+      voices: (kind) => ipcRenderer.invoke("video:tts.voices", kind),
     },
     analyses: {
       list: () => ipcRenderer.invoke("video:analyses.list"),

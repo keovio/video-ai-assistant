@@ -56,14 +56,17 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   videoDefaultDuration: { type: "number", min: 10, max: 300, step: 1, default: 75 },
   videoDefaultShotCount: { type: "number", min: 1, max: 12, step: 1, default: 6 },
   videoAspect: { type: "enum", values: ["9:16", "16:9", "1:1"], default: "9:16" },
-  ttsProvider: { type: "enum", values: ["openai", "jimeng"], default: "openai" },
+  ttsProvider: { type: "enum", values: ["openai", "local", "jimeng"], default: "openai" },
   ttsVoice: { type: "string", maxLength: 64, default: "alloy" },
   ttsRate: { type: "number", min: 0.5, max: 2, step: 0.05, default: 1 },
   ttsBaseUrl: { type: "string", maxLength: 500, default: "" },
-  ttsModel: { type: "string", maxLength: 64, default: "tts-1" },
+  ttsModel: { type: "string", maxLength: 128, default: "tts-1" },
+  // 本地 TTS（0.6.1）：本机跑的 OpenAI 兼容语音服务（Kokoro-FastAPI、openedai-speech、CosyVoice/IndexTTS 的兼容封装等），Key 可空
+  ttsLocalBaseUrl: { type: "string", maxLength: 500, default: "http://127.0.0.1:8880/v1" },
+  ttsLocalModel: { type: "string", maxLength: 128, default: "kokoro" },
   // AI 文本分析（M4：抖音分析用 OpenAI 兼容 chat completions；Key 走 secrets 存储，不进 settings.json）
   aiBaseUrl: { type: "string", maxLength: 500, default: "" },
-  aiModel: { type: "string", maxLength: 64, default: "gpt-4o-mini" },
+  aiModel: { type: "string", maxLength: 128, default: "gpt-4o-mini" },
 } });
 const logger = createLogger({ dir: path.join(DATA_DIR, "logs"), level: settings.get("logLevel"), echo: !app.isPackaged || SMOKE });
 const tasks = createTaskManager({ concurrency: 2, logger });
@@ -487,6 +490,7 @@ setupVideoIpc({
   getTtsSettings: () => ({
     ttsProvider: settings.get("ttsProvider"), ttsVoice: settings.get("ttsVoice"), ttsRate: settings.get("ttsRate"),
     ttsBaseUrl: settings.get("ttsBaseUrl"), ttsModel: settings.get("ttsModel"),
+    ttsLocalBaseUrl: settings.get("ttsLocalBaseUrl"), ttsLocalModel: settings.get("ttsLocalModel"),
   }),
   getTtsKey: () => ttsSecrets.get("ttsApiKey"),
   getAiSettings: () => ({ aiBaseUrl: settings.get("aiBaseUrl"), aiModel: settings.get("aiModel") }),

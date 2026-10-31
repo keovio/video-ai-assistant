@@ -561,3 +561,8 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .clip-row.compact .clip-row-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .clip-row.compact .grow { flex: 1; }
 .workbench-side .compose-card { position: sticky; bottom: 0; z-index: 2; }
+/* 0.6.1 设置里的模型/音色选择 */
+.picker { display: flex; align-items: center; gap: 8px; }
+.picker .input { width: 200px; }
+.picker .picker-select { width: 200px; }
+.picker .picker-select[hidden] { display: none; }

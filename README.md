@@ -2,6 +2,12 @@
 
 口播视频自动化：脚本加分镜、配音、画面、合成导出。基于 electron-app-template（Electron 44），本地运行，数据存在本机。
 
+## 0.6.1 模型选择与本地 TTS
+
+- 设置里的 AI 模型、配音模型、音色旁边有“获取列表”：主进程用已存的 Key 调 `GET {Base URL}/models`（音色试 `/audio/voices`、`/voices`），结果缓存在本机，下拉选择；接口不提供列表时仍可手填。
+- 配音服务商新增“本地 TTS”：调用本机 OpenAI 兼容的 `POST /audio/speech`，Key 可空；地址 `ttsLocalBaseUrl`（默认 http://127.0.0.1:8880/v1，Kokoro-FastAPI 默认端口）、模型 `ttsLocalModel`（默认 kokoro）与云端设置分开保存。
+- 模型名长度上限放宽到 128。测试见 test/video-061-models.test.js。
+
 ## 0.6.0 分镜编辑 / 合成导出重做
 
 - 两页顶部统一为项目切换栏（renderer/pages/project-picker.js）：下拉切换项目，右侧放本页操作；没选项目时显示项目卡片直接点选。

@@ -21,6 +21,47 @@
       window.Shell.onSettings((c, s) => { if (key in c && document.activeElement !== input) input.value = String(s[key] ?? ""); });
       return input;
     };
+    // 可手填、也可从服务端列表里选的输入框（模型、音色）。loadFn() → { ok, items, error }
+    // 列表按 key 缓存在本机，下次打开设置直接可选；“获取列表”重新拉。
+    const pickerInput = (key, placeholder, loadFn, what = "模型") => {
+      const input = textInput(key, placeholder);
+      const cacheKey = "video.pick." + key;
+      const sel = h("select", { class: "input picker-select", title: `从服务端的${what}列表里选` });
+      const fill = (items) => {
+        const cur = input.value.trim();
+        sel.replaceChildren(h("option", { value: "" }, `选择${what}（${items.length}）`), ...items.map((m) => h("option", { value: m }, m)));
+        sel.value = items.includes(cur) ? cur : "";
+        sel.hidden = !items.length;
+      };
+      sel.addEventListener("change", () => {
+        if (!sel.value) return;
+        input.value = sel.value;
+        window.Shell.saveSettings({ [key]: sel.value });
+      });
+      input.addEventListener("input", () => { if ([...sel.options].some((o) => o.value === input.value.trim())) sel.value = input.value.trim(); else sel.value = ""; });
+      let cached = [];
+      try { cached = JSON.parse(localStorage.getItem(cacheKey) || "[]"); } catch { cached = []; }
+      fill(Array.isArray(cached) ? cached : []);
+      const btn = h("button", { class: "btn", title: `从接口拉取可用${what}` }, "获取列表");
+      btn.onclick = async () => {
+        btn.disabled = true; btn.textContent = "获取中…";
+        try {
+          const r = await loadFn();
+          if (!r || !r.ok) { window.Shell.toast((r && r.error) || "获取失败", "error"); return; }
+          const items = r.items || [];
+          if (!items.length) { window.Shell.toast(`接口没返回${what}列表，请手动填写`); return; }
+          try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch { /* ignore */ }
+          fill(items);
+          window.Shell.toast(`找到 ${items.length} 个${what}，在下拉里选`, "success");
+          sel.focus();
+        } catch (e) { window.Shell.toast(e.message, "error"); }
+        finally { btn.disabled = false; btn.textContent = "获取列表"; }
+      };
+      return h("div", { class: "picker" }, input, sel, btn);
+    };
+    const models = (kind) => async () => { const r = await api.video.ai.models(kind); return r.ok ? { ok: true, items: r.models } : r; };
+    const voices = (kind) => async () => { const r = await api.video.ai.voices(kind); return r.ok ? { ok: true, items: r.voices } : r; };
+
     // Key 输入行：密码框 + 保存/清除，状态显示在说明里（与 content-ai-assistant 的 API Key 行一致）
     const keyRow = (title, placeholder, statusFn, setFn) => {
       const input = h("input", { class: "input", type: "password", placeholder, autocomplete: "off" });
@@ -61,16 +102,39 @@
     });
 
     // ---------------- 配音 ----------------
+    // 服务商切换时整块重画：云端（OpenAI 兼容）/ 本地 / 即梦各自只显示自己用得到的项
     window.Shell.registerSettingsSection({
       id: "video-voice", title: "配音", icon: "mic", order: 2,
       render(box) {
-        box.append(
-          row("配音服务商", "即梦尚未自动接通：选即梦后请在即梦网页生成配音，再用“导入音频”导入", select("ttsProvider", [["openai", "OpenAI 兼容 TTS"], ["jimeng", "即梦（网页版，手动导入）"]])),
-          row("音色", "OpenAI 兼容服务的音色名，例如 alloy", textInput("ttsVoice", "如 alloy")),
-          row("语速", "项目没有单独设置时都用这个倍率", range("ttsRate", { min: 0.5, max: 2, step: 0.05, format: (v) => Number(v).toFixed(2) + " 倍" })),
-          row("接口地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("ttsBaseUrl", "https://api.openai.com/v1"), { stack: true }),
-          row("模型", "例如 tts-1、gpt-4o-mini-tts", textInput("ttsModel", "如 tts-1")),
-          keyRow("TTS Key", "粘贴 TTS 服务的 API Key", () => api.video.secrets.status(), (v) => api.video.secrets.set(v)));
+        const head = row("配音服务商", "", select("ttsProvider", [["openai", "云端 TTS（OpenAI 兼容）"], ["local", "本地 TTS（本机服务）"], ["jimeng", "即梦（网页版，手动导入）"]]));
+        const body = h("div", {});
+        const draw = () => {
+          const p = window.Shell.getSettings().ttsProvider || "openai";
+          const desc = head.querySelector(".set-desc") || head.querySelector(".set-text").appendChild(h("div", { class: "set-desc" }));
+          const rate = row("语速", "项目没有单独设置时都用这个倍率", range("ttsRate", { min: 0.5, max: 2, step: 0.05, format: (v) => Number(v).toFixed(2) + " 倍" }));
+          if (p === "jimeng") {
+            desc.textContent = "即梦尚未自动接通：在即梦网页生成配音后，用分镜里的“导入音频”导入";
+            body.replaceChildren();
+          } else if (p === "local") {
+            desc.textContent = "本机跑的语音服务，只要提供 OpenAI 兼容的 /audio/speech 接口就能用，比如 Kokoro-FastAPI、openedai-speech，或 CosyVoice、IndexTTS、GPT-SoVITS 的 OpenAI 兼容封装；不需要 Key";
+            body.replaceChildren(
+              row("服务地址", "本地服务的 Base URL，一般以 /v1 结尾，例如 http://127.0.0.1:8880/v1", textInput("ttsLocalBaseUrl", "http://127.0.0.1:8880/v1"), { stack: true }),
+              row("模型", "本地服务里的模型名，例如 kokoro、tts-1；可点“获取列表”从服务里选", pickerInput("ttsLocalModel", "如 kokoro", models("tts-local"))),
+              row("音色", "例如 zf_xiaobei（Kokoro 中文女声）；服务支持时可点“获取列表”", pickerInput("ttsVoice", "如 zf_xiaobei", voices("tts-local"), "音色")),
+              rate);
+          } else {
+            desc.textContent = "OpenAI、硅基流动等提供 OpenAI 兼容语音接口的云服务";
+            body.replaceChildren(
+              row("接口地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("ttsBaseUrl", "https://api.openai.com/v1"), { stack: true }),
+              row("模型", "例如 tts-1、gpt-4o-mini-tts；保存 Key 后可点“获取列表”选", pickerInput("ttsModel", "如 tts-1", models("tts"))),
+              row("音色", "服务商的音色名，例如 alloy", pickerInput("ttsVoice", "如 alloy", voices("tts"), "音色")),
+              rate,
+              keyRow("TTS Key", "粘贴 TTS 服务的 API Key", () => api.video.secrets.status(), (v) => api.video.secrets.set(v)));
+          }
+        };
+        window.Shell.onSettings((c) => { if ("ttsProvider" in c && box.isConnected) draw(); });
+        box.append(head, body);
+        draw();
       },
     });
 
@@ -80,7 +144,7 @@
       render(box) {
         box.append(
           row("接口地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("aiBaseUrl", "https://api.openai.com/v1"), { stack: true }),
-          row("模型", "聊天模型名；支持看图的模型（如 gpt-4o-mini、qwen-vl-plus）会结合视频画面分析", textInput("aiModel", "如 gpt-4o-mini")),
+          row("模型", "保存 Key 后点“获取列表”从服务里选，也可以手填；支持看图的模型（如 gpt-4o-mini、qwen-vl-plus）会结合视频画面分析", pickerInput("aiModel", "如 gpt-4o-mini", models("ai"))),
           keyRow("AI Key", "粘贴 AI 服务的 API Key（抖音分析用）", () => api.video.ai.status(), (v) => api.video.ai.setKey(v)));
       },
     });
