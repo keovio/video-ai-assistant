@@ -429,8 +429,18 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
   if (!st || !st.loaded || st.view.webContents.isDestroyed()) return [];
   const out = [];
   const n = Math.max(1, Math.min(4, Number(count) || 1));
+  const wc = st.view.webContents;
+  // 0.6.8：视频超过 8 秒时按时长均匀跳到几个位置截图（开头/中段/结尾都看到），截完回到原位置；
+  // 读不到视频元素时退回按间隔连续截。
+  let seekPlan = null;
+  try {
+    const d = await withTimeout(wc.executeJavaScript(`(() => { const v = [...document.querySelectorAll("video")].sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0]; return v && isFinite(v.duration) ? { dur: v.duration, cur: v.currentTime } : null; })()`), 3000, "读取视频时长");
+    if (d && d.dur > 8) seekPlan = { cur: d.cur, points: Array.from({ length: n }, (_, i) => Math.round(d.dur * (0.1 + (0.8 * i) / Math.max(1, n - 1)) * 10) / 10) };
+  } catch { seekPlan = null; }
+  const seek = (t) => withTimeout(wc.executeJavaScript(`new Promise((res) => { const v = [...document.querySelectorAll("video")].sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0]; if (!v) return res(false); const done = () => setTimeout(() => res(true), 350); v.addEventListener("seeked", done, { once: true }); v.currentTime = ${Number(t) || 0}; setTimeout(() => res(true), 2500); })`), 4000, "跳转视频").catch(() => false);
   for (let i = 0; i < n; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, Math.max(200, Math.min(5000, Number(intervalMs) || 1500))));
+    if (seekPlan) await seek(seekPlan.points[i]);
+    else if (i > 0) await new Promise((r) => setTimeout(r, Math.max(200, Math.min(5000, Number(intervalMs) || 1500))));
     try {
       let img = await withTimeout(st.view.webContents.capturePage(), 5000, "截图");
       if (!img || img.isEmpty()) continue;
@@ -439,6 +449,7 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
       out.push("data:image/jpeg;base64," + img.toJPEG(70).toString("base64"));
     } catch (err) { log.warn("截取画面失败：" + ((err && err.message) || err)); }
   }
+  if (seekPlan) await seek(seekPlan.cur);
   return out;
 }
 
@@ -472,20 +483,25 @@ const ttsSecrets = createSecretsStore({ file: path.join(DATA_DIR, "secrets.json"
 // TTS / AI 网络请求走 net.fetch（走系统代理），包装成 tts.js 约定的 { ok, status, arrayBuffer, text }。
 // 整个请求（含读响应体）最多 3 分钟，服务卡住时不再让镜头永远停在“配音中”。
 const API_TIMEOUT_MS = 180000;
-const ttsFetch = async (url, opts = {}) => {
+// 0.6.8：AI 分析单独放宽到 8 分钟（思考模型、长视频输出多，3 分钟常不够）
+const AI_TIMEOUT_MS = 480000;
+const makeFetch = (timeoutMs) => async (url, opts = {}) => {
+  const mins = Math.round(timeoutMs / 60000);
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(new Error("请求超时（3 分钟）")), API_TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(new Error(`请求超时（${mins} 分钟）`)), timeoutMs);
   let res;
   try { res = await net.fetch(url, { ...opts, signal: ctl.signal }); }
-  catch (err) { clearTimeout(timer); throw ctl.signal.aborted ? new Error("请求超时（3 分钟），请检查网络或服务地址后重试") : err; }
+  catch (err) { clearTimeout(timer); throw ctl.signal.aborted ? new Error(`请求超时（${mins} 分钟），请检查网络或服务地址后重试`) : err; }
   const body = (fn) => async () => {
     try { return await fn(); }
-    catch (err) { throw ctl.signal.aborted ? new Error("读取响应超时（3 分钟），请重试") : err; }
+    catch (err) { throw ctl.signal.aborted ? new Error(`读取响应超时（${mins} 分钟），请重试`) : err; }
     finally { clearTimeout(timer); }
   };
   if (!res.ok) clearTimeout(timer);
   return { ok: res.ok, status: res.status, arrayBuffer: body(() => res.arrayBuffer()), text: body(() => res.text()) };
 };
+const ttsFetch = makeFetch(API_TIMEOUT_MS);
+const aiFetch = makeFetch(AI_TIMEOUT_MS);
 
 setupVideoIpc({
   ipcMain, store: videoStore, videoDir,
@@ -503,6 +519,7 @@ setupVideoIpc({
   getAiSettings: () => ({ aiBaseUrl: settings.get("aiBaseUrl"), aiModel: settings.get("aiModel") }),
   getAiKey: () => ttsSecrets.get("aiApiKey"),
   fetchImpl: ttsFetch,
+  aiFetchImpl: aiFetch,
   logger,
   secrets: ttsSecrets,
 });

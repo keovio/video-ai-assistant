@@ -32,3 +32,20 @@ test("SSE 流式响应和片段数组都能读出正文", async () => {
   const r2 = await chatComplete({ ...base, fetchImpl: async () => resp({ choices: [{ message: { content: [{ type: "text", text: "{\"b\":3}" }] } }] }) });
   assert.equal(r2.content, "{\"b\":3}");
 });
+
+test("GLM 思考模型：5.3 系列降为 low，可关闭的系列关思考；参数被拒时去掉重试", async () => {
+  const { thinkingParams } = require("../lib/video/ai");
+  assert.deepEqual(thinkingParams("glm-5.3-flash"), { reasoning_effort: "low" });
+  assert.deepEqual(thinkingParams("glm-4.7-flash"), { thinking: { type: "disabled" } });
+  assert.deepEqual(thinkingParams("gpt-4o-mini"), {});
+  const bodies = [];
+  const fetchImpl = async (_u, o) => {
+    const b = JSON.parse(o.body); bodies.push(b);
+    if (b.reasoning_effort) return { ok: false, status: 400, text: async () => "unknown parameter reasoning_effort" };
+    return resp({ choices: [{ message: { content: "{\"ok\":1}" }, finish_reason: "stop" }] });
+  };
+  const r = await chatComplete({ ...base, model: "glm-5.3-flash", fetchImpl });
+  assert.equal(r.content, "{\"ok\":1}");
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[1].reasoning_effort, undefined);
+});
