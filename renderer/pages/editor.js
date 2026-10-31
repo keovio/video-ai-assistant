@@ -249,7 +249,8 @@
           h("div", { class: "seconds-line" }, secondsInput, secondsHint),
           label("画面描述"),
           visual,
-          label("画面提示词", "复制到生成网站做视频片段用"),
+          h("div", { class: "row prompt-label-row" }, label("画面提示词", "复制到生成网站做视频片段用"), h("span", { class: "spacer" }),
+            h("button", { class: "btn small", title: "AI 优化或模仿参考写法改写这一镜", onclick: () => openRewrite([i]) }, "AI 优化")),
           imagePrompt,
           h("div", { class: "asset-box" },
             h("div", { class: "asset-line" },
@@ -411,6 +412,7 @@
         h("div", { class: "split-left shot-pane" },
           h("div", { class: "pane-head" },
             h("b", {}, "镜头"), countEl, h("span", { class: "spacer" }),
+            h("button", { class: "btn small", title: "AI 优化或模仿参考写法，改写所有镜头的画面提示词", onclick: () => openRewrite(draft.shots.map((_, k) => k)) }, "优化提示词"),
             h("button", { class: "btn small", id: "btn-voice-all", title: "给所有有口播的镜头生成配音", onclick: (e) => generateAll(e.currentTarget) }, "全部配音")),
           listBox,
           h("button", { class: "btn block add-shot", onclick: () => {
@@ -419,6 +421,71 @@
             redrawList(); renderDetail();
           } }, "＋ 添加镜头")),
         h("div", { class: "split-right" }, detailBox)));
+
+    // 0.6.24：AI 优化 / 模仿写法改写画面提示词：先预览，确认后才替换
+    async function openRewrite(idxs) {
+      const api = window.app;
+      const skills = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath || a.skillText);
+      const SS = window.StyleSkill;
+      const mode = h("select", { class: "input" },
+        h("option", { value: "optimize" }, "优化：改成更适合生视频网站的写法"),
+        h("option", { value: "skill" }, "模仿风格 skill"),
+        h("option", { value: "ref" }, "模仿我贴的参考提示词"));
+      const skillSel = h("select", { class: "input" }, ...skills.map((a) => h("option", { value: a.id }, (a.skill && a.skill.name) || a.sourceTitle || "未命名 skill")));
+      const cur = SS ? SS.get(draft.project.id) : "";
+      if (cur && skills.some((a) => a.id === cur)) skillSel.value = cur;
+      const ref = h("textarea", { class: "input", rows: 5, placeholder: "贴一段或几段你觉得写得好的提示词，AI 会照它的写法改写每一镜" });
+      ref.value = localStorage.getItem("editor.rewriteRef") || "";
+      const skillField = h("label", { class: "form-field", hidden: true }, h("span", { class: "form-label" }, "风格 skill"), skills.length ? skillSel : h("span", { class: "muted small-text" }, "还没有保存的风格 skill，先去“视频分析”保存一个"));
+      const refField = h("label", { class: "form-field", hidden: true }, h("span", { class: "form-label" }, "参考提示词"), ref);
+      mode.onchange = () => { skillField.hidden = mode.value !== "skill"; refField.hidden = mode.value !== "ref"; };
+      const status = h("p", { class: "muted small-text" }, idxs.length === 1 ? `改写第 ${idxs[0] + 1} 镜` : `改写全部 ${idxs.length} 镜`);
+      const result = h("div", { class: "rewrite-list" });
+      const runBtn = h("button", { class: "btn primary" }, "开始改写");
+      const applyBtn = h("button", { class: "btn primary", hidden: true }, "全部替换");
+      const close = () => overlay.remove();
+      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+        h("div", { class: "modal modal-form modal-wide", role: "dialog" },
+          h("h2", {}, "AI 优化提示词"), mode, skillField, refField, status, result,
+          h("div", { class: "actions end" }, h("button", { class: "btn", onclick: close }, "取消"), runBtn, applyBtn)));
+      document.body.append(overlay);
+      let out = [];
+      runBtn.onclick = async () => {
+        let reference = "";
+        if (mode.value === "skill") {
+          const a = skills.find((x) => x.id === skillSel.value);
+          if (!a) return window.Shell.toast("先选一个风格 skill", "error");
+          reference = a.skillText || (SS ? SS.suffix(a) : "");
+        } else if (mode.value === "ref") {
+          reference = ref.value.trim();
+          if (!reference) return window.Shell.toast("先贴一段参考提示词", "error");
+          localStorage.setItem("editor.rewriteRef", reference);
+        }
+        runBtn.disabled = true; status.textContent = "AI 改写中…"; result.textContent = "";
+        const t0 = Date.now();
+        const r = await api.video.ai.rewritePrompts({
+          mode: mode.value === "optimize" ? "optimize" : "imitate", reference, aspect: aspectSelect.value,
+          shots: idxs.map((k) => { const s = draft.shots[k]; return { narration: s.narration, visual: s.visual, prompt: s.imagePrompt || s.visual }; }),
+        }).catch((e) => ({ ok: false, error: e.message }));
+        runBtn.disabled = false;
+        if (!r || !r.ok) { status.textContent = "改写失败：" + ((r && r.error) || "未知错误"); return; }
+        out = r.prompts;
+        status.textContent = `改写完成（${((Date.now() - t0) / 1000).toFixed(0)} 秒），可以逐条修改，确认后替换`;
+        result.replaceChildren(...idxs.map((k, j) => {
+          const ta = h("textarea", { class: "input", rows: 3 }); ta.value = out[j] || "";
+          ta.oninput = () => { out[j] = ta.value; };
+          const old = draft.shots[k].imagePrompt || draft.shots[k].visual || "";
+          return h("div", { class: "rewrite-item" }, h("b", {}, `第 ${k + 1} 镜`), h("div", { class: "muted small-text rewrite-old", title: old }, "原：" + (old || "（空）")), ta);
+        }));
+        runBtn.textContent = "重新改写"; applyBtn.hidden = false;
+      };
+      applyBtn.onclick = () => {
+        let n = 0;
+        idxs.forEach((k, j) => { const v = String(out[j] || "").trim(); if (v) { draft.shots[k].imagePrompt = v; n++; } });
+        close(); renderDetail(); refreshDirty();
+        window.Shell.toast(`已替换 ${n} 镜画面提示词，记得保存`, "success");
+      };
+    }
 
     savedSnap = snapshot();
     redrawList();

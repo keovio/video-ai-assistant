@@ -129,6 +129,8 @@ contextBridge.exposeInMainWorld("app", {
       setKey: (value) => ipcRenderer.invoke("video:ai.setKey", value),
       // kind: "ai" | "tts" | "tts-local" | "tts-voicebox" → { ok, models: [id…] }
       models: (kind) => ipcRenderer.invoke("video:ai.models", kind),
+      // 0.6.24 { shots:[{narration,visual,prompt}], mode:"optimize"|"imitate", reference, aspect } → { ok, prompts }
+      rewritePrompts: (input) => ipcRenderer.invoke("video:ai.rewritePrompts", input),
       voices: (kind) => ipcRenderer.invoke("video:tts.voices", kind),
     },
     publish: {

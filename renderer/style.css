@@ -703,3 +703,10 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .lib-day { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--text-2, #666); margin: 8px 0 -2px; }
 .lib-day:first-child { margin-top: 0; }
 .style-skill-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
+
+/* 0.6.24 AI 优化提示词 */
+.prompt-label-row { display: flex; align-items: center; gap: 8px; }
+.modal-wide { width: min(680px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; }
+.rewrite-list { display: flex; flex-direction: column; gap: 12px; }
+.rewrite-item { display: flex; flex-direction: column; gap: 4px; }
+.rewrite-old { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
