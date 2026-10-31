@@ -93,7 +93,33 @@ contextBridge.exposeInMainWorld("app", {
       openFolder: (renderId) => ipcRenderer.invoke("video:renders.openFolder", renderId),
       openOutput: (renderId) => ipcRenderer.invoke("video:renders.openOutput", renderId),
     },
-    jimeng: { open: () => ipcRenderer.invoke("video:jimeng.open") },
+    jimeng: {
+      open: () => ipcRenderer.invoke("video:jimeng.open"),
+      show: () => ipcRenderer.invoke("video:jimeng.show"),
+      hide: () => ipcRenderer.invoke("video:jimeng.hide"),
+      setBounds: (rect) => ipcRenderer.invoke("video:jimeng.setBounds", rect),
+    },
+    // 抖音分析（M4）：内嵌视图提取 + AI 分析 + 分析记录
+    douyin: {
+      open: () => ipcRenderer.invoke("video:douyin.open"),
+      show: () => ipcRenderer.invoke("video:douyin.show"),
+      hide: () => ipcRenderer.invoke("video:douyin.hide"),
+      setBounds: (rect) => ipcRenderer.invoke("video:douyin.setBounds", rect),
+      extract: () => ipcRenderer.invoke("video:douyin.extract"),
+      analyze: (input) => ipcRenderer.invoke("video:douyin.analyze", input),
+    },
+    ai: {
+      status: () => ipcRenderer.invoke("video:ai.status"),
+      setKey: (value) => ipcRenderer.invoke("video:ai.setKey", value),
+    },
+    analyses: {
+      list: () => ipcRenderer.invoke("video:analyses.list"),
+      get: (id) => ipcRenderer.invoke("video:analyses.get", id),
+      upsert: (input) => ipcRenderer.invoke("video:analyses.upsert", input),
+      remove: (id) => ipcRenderer.invoke("video:analyses.remove", id),
+      saveSkill: (id) => ipcRenderer.invoke("video:analyses.saveSkill", id),
+      import: (id) => ipcRenderer.invoke("video:analyses.import", id),
+    },
     tts: { providers: () => ipcRenderer.invoke("video:tts.providers") },
     ffmpeg: { status: () => ipcRenderer.invoke("video:ffmpeg.status") },
     secrets: {

@@ -2,6 +2,21 @@
 
 口播视频自动化：脚本加分镜、配音、画面、合成导出。基于 electron-app-template（Electron 44），本地运行，数据存在本机。
 
+## 现在能做什么（M4，0.4.0）
+
+- M3 的全部内容，另有以下新增与改动。
+- 抖音分析（新页面“抖音分析”，选择器与 AI 调用未经真机验证）：
+  - 左侧是内嵌抖音视图（Electron WebContentsView，持久会话 `persist:douyin`，登录一次后保持；只在抖音分析页激活时显示，切走页面时隐藏）。右侧是分析面板。
+  - 在左侧点开一个视频后点“分析当前视频”，主进程用 `lib/video/douyin.js` 的选择器图谱（集中一处、明确标注“未验证”）读当前视频的链接、作者、文案和计数；什么都读不到时明确报错，并提供手动粘贴链接/文案的兜底，绝不编造信息。
+  - 分析走 OpenAI 兼容的 chat completions（新 lib/video/ai.js）：设置页“视频 → AI 分析”里配服务地址、模型和 Key（Key 走与 TTS Key 同一套 secrets 存储，页面只见“已设置/末 4 位”）。模型必须只返回 JSON，解析或校验失败时明确报错、不保存、不编造。没配 Key 时分析按钮禁用并提示去设置，但仍可看提取到的视频信息和手动粘贴。
+  - 分析结果全部可在面板里编辑：风格拆解（画面、镜头运镜、节奏、情绪、色彩光线、声音音乐、文案钩子）、风格 skill（SKILL.md 形状：frontmatter name/description + 正文，可复制、可保存 skill 文件到数据目录 `video/analyses/<id>/skill.md`）、脚本与分镜（标题、口播全文、每镜口播/画面/生视频提示词/预估秒数）。
+  - “导入到项目”按分镜新建一个 9:16 项目并跳到分镜编辑。分析记录存在 `data/video/analyses.json`，可在页面里打开/删除。
+- 即梦改内嵌视图（不再弹独立窗口）：
+  - “合成导出”页左侧是内嵌即梦视图（Electron WebContentsView，持久会话 `persist:jimeng`），右侧是合成控制与镜头状态；视图只在合成导出页激活时显示。`lib/video/jimeng.js` 的自动操作 runner 不变（选择器图谱仍标注未验证，失败时视图保持可见供手动完成，手动下载后用“导入片段”导进来）；即梦配音仍未接通（M2 占位 + 导入兜底不变）。
+- 项目页改卡片：一个项目一张卡片（网格排），卡片上有标题、状态、比例、镜头数、预估总时长、标签和打开/复制/删除；新建表单仍在卡片网格上方。
+- 左右结构：分镜编辑左栏是紧凑的镜头列表（点一行选中），右栏是选中镜头的详情表单与配音/画面操作；合成导出左栏是即梦视图 + 镜头列表，右栏是合成控制、进度与输出；设置页“视频”分组内左栏是分类（画面与新建 / 配音 / AI 分析 / 系统），右栏是对应表单。原有按钮、状态与保存语义不变。
+- 外壳小修：模块卡片的瀑布流布局改为在下一帧统一重算，避免 ResizeObserver 在同一帧内反复触发（之前在新布局下冒烟会稳定报 "ResizeObserver loop completed with undelivered notifications"）。
+
 ## 现在能做什么（M3，0.3.0）
 
 - M2 的全部内容：可选择 TTS、音频导入、实测时长重排、单镜头试听。
@@ -12,8 +27,8 @@
   - BGM：只有项目里配了已存在的 BGM 文件时才叠加（默认关，音量约为主音量的 18%）；BGM 来源仍未定，软件不自带任何音乐文件。
   - 输出：MP4（H.264 + AAC，faststart），放在项目输出目录下；同一项目同时只跑一个合成任务。
   - ffmpeg/ffprobe 缺失时在开工前就明确报错并给安装提示，不在渲染中途才失败。
-- 即梦视频片段（M3，自动化部分未经真机验证）：
-  - “合成导出”页可点“打开即梦”（内嵌窗口，持久会话，登录一次后保持）、“即梦生成片段”（自动填提示词、点生成、等生成完成、点下载、导入该镜头），以及“导入片段”（手动下载后导入）。
+- 即梦视频片段（M3，自动化部分未经真机验证；M4 起视图嵌在合成导出页内，不再弹独立窗口）：
+  - “合成导出”页可点“打开即梦”（内嵌视图，持久会话，登录一次后保持）、“即梦生成片段”（自动填提示词、点生成、等生成完成、点下载、导入该镜头），以及“导入片段”（手动下载后导入）。
   - 所有页面选择器都集中在 `lib/video/jimeng.js` 的 SELECTORS 里并标注“未验证”：当前环境没有登录态，无法对真实即梦页面实测，自动化失败时会把窗口交给用户手动完成（手动下载后用“导入片段”导进来），绝不谎称生成成功。接通真机后第一件事就是按实际页面修正这张表。
   - 即梦配音自动操作仍未接通（与视频生成不是同一页面/流程），仍走 M2 的占位 + 导入音频兜底。
 
@@ -31,12 +46,13 @@
 ## 明确还没做 / 只是占位（不假装能用）
 
 - 即梦配音自动操作：仍未接通。设置里选“即梦”后点生成配音，会明确报错并指引你去即梦网页生成配音、下载后用“导入音频”导进来。
-- 即梦视频自动操作：代码已写、单测用假页面跑通，但未经真实即梦页面验证，选择器可能一上线就失效；失败时转手动导入，不谎称成功。
-- M4：渲染队列、按镜头重试（渲染记录重跑已做，队列与成本护栏未做）、成本护栏、预览（目前是打开文件夹/系统播放器，不是内置时间线预览）、辅助发布。
+- 即梦视频自动操作与抖音视频信息提取：代码已写、单测用假页面跑通，但未经真实页面验证，选择器可能一上线就失效；失败时转手动，不谎称成功。内嵌视图（WebContentsView）在 macOS/Windows 上的实际表现未经验证，只在 Linux 打包 + 冒烟里跑通过页面结构（未登录、未加载真实抖音/即梦页面）。
+- AI 分析：只用假服务单测过调用、JSON 校验与失败分类，没有用真实 Key 跑过；模型返回质量、JSON 失败率、费用均未验证。
+- M4 剩余：渲染队列、成本护栏、内置预览、辅助发布（仍未做）。
 
-## 还没做（M4）
+## 还没做
 
-- M4：渲染队列、成本护栏、内置预览、辅助发布。
+- 渲染队列、成本护栏、内置预览、辅助发布。
 
 ## 本地运行
 
@@ -63,11 +79,11 @@ xvfb-run -a npm run smoke   # Linux 无桌面环境时
 设置与项目数据存在应用数据目录（`APP_DATA_DIR` 可覆盖）：
 
 - `settings.json`：设置（含视频默认值）
-- `data/video/projects.json`、`shots.json`、`assets.json`、`renders.json`：项目、镜头、资产记录、渲染记录
-- 资产文件（以后）：`projects/<项目 id>/assets/`，记录里只存相对路径
+- `data/video/projects.json`、`shots.json`、`assets.json`、`renders.json`、`analyses.json`：项目、镜头、资产记录、渲染记录、抖音分析记录
+- 资产文件（以后）：`projects/<项目 id>/assets/`，记录里只存相对路径；分析的 skill 文件：`analyses/<分析 id>/skill.md`
 
 ## 开发说明
 
-- 主进程：`main.js`，视频 IPC 在 `lib/video-ipc.js`，存储在 `lib/video-store.js`，纯数据模型在 `lib/video-model.js`；配音适配器在 `lib/video/tts.js`，音频资产工具在 `lib/video/audio.js`，TTS Key 存储在 `lib/video/secrets.js`；合成在 `lib/video/render.js`，即梦自动操作在 `lib/video/jimeng.js`，通用媒体落盘在 `lib/video/media-store.js`。
-- 页面：`renderer/pages/projects.js`（项目列表）、`renderer/pages/editor.js`（分镜编辑）、`renderer/pages/render.js`（合成导出），沿用模板的 Shell 页面写法，不引入新框架。
+- 主进程：`main.js`（含内嵌视图管理：即梦/抖音 WebContentsView，`persist:jimeng` / `persist:douyin`），视频 IPC 在 `lib/video-ipc.js`，存储在 `lib/video-store.js`，纯数据模型在 `lib/video-model.js`；配音适配器在 `lib/video/tts.js`，音频资产工具在 `lib/video/audio.js`，TTS/AI Key 存储在 `lib/video/secrets.js`；合成在 `lib/video/render.js`，即梦自动操作在 `lib/video/jimeng.js`，抖音信息提取在 `lib/video/douyin.js`，AI 文本分析在 `lib/video/ai.js`，通用媒体落盘在 `lib/video/media-store.js`。
+- 页面：`renderer/pages/projects.js`（项目卡片）、`renderer/pages/editor.js`（分镜编辑，左右结构）、`renderer/pages/render.js`（合成导出，左右结构 + 内嵌即梦视图）、`renderer/pages/douyin.js`（抖音分析，左视图右面板）、`renderer/pages/video-settings.js`（视频设置，分类左右结构），沿用模板的 Shell 页面写法，不引入新框架。
 - 检查与测试：`npm run check`（全部 JS 语法检查）、`npm test`（`node --test`）。

@@ -7,7 +7,7 @@
 //   --app-gpu      macOS 上恢复显卡加速（默认关闭，见下）
 //   --smoke-test   CI 冒烟测试：打开窗口、检查页面和预加载接口后退出（退出码 0 = 通过）
 const electron = require("electron");
-const { app, BrowserWindow, ipcMain, shell, net, nativeTheme, safeStorage } = electron;
+const { app, BrowserWindow, BrowserView, WebContentsView, ipcMain, shell, net, nativeTheme, safeStorage } = electron;
 const path = require("path");
 const fs = require("fs");
 const { loadConfig } = require("./lib/config");
@@ -56,6 +56,9 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   ttsRate: { type: "number", min: 0.5, max: 2, step: 0.05, default: 1 },
   ttsBaseUrl: { type: "string", maxLength: 500, default: "" },
   ttsModel: { type: "string", maxLength: 64, default: "tts-1" },
+  // AI 文本分析（M4：抖音分析用 OpenAI 兼容 chat completions；Key 走 secrets 存储，不进 settings.json）
+  aiBaseUrl: { type: "string", maxLength: 500, default: "" },
+  aiModel: { type: "string", maxLength: 64, default: "gpt-4o-mini" },
 } });
 const logger = createLogger({ dir: path.join(DATA_DIR, "logs"), level: settings.get("logLevel"), echo: !app.isPackaged || SMOKE });
 const tasks = createTaskManager({ concurrency: 2, logger });
@@ -145,6 +148,8 @@ function createWindow() {
   win.once("ready-to-show", reveal);
   setTimeout(reveal, 3000);
   win.on("closed", () => { if (mainWindow === win) mainWindow = null; });
+  // 窗口大小变了，内嵌视图按页面最新上报的位置重算一次（页面侧 resize 时也会上报）
+  win.on("resize", () => { for (const st of embeddedViews.values()) if (st.visible) applyViewBounds(st); });
   win.webContents.once("did-finish-load", () => BOOT.markReady());
   win.webContents.on("did-finish-load", () => { try { win.webContents.setZoomFactor(settings.get("zoom")); } catch { /* ignore */ } });
   win.webContents.on("render-process-gone", (_e, d) => log.error(`页面进程退出：${d.reason}（${d.exitCode}）`));
@@ -201,6 +206,123 @@ ipcMain.handle("update:openUrl", (_e, url) => { if (/^https:\/\//.test(String(ur
 
 setupShellIpc({ electron, settings, logger, tasks, dataDir: DATA_DIR, broadcast, getWindows: () => BrowserWindow.getAllWindows() });
 
+// ---------------- 内嵌视图（M4）：即梦 / 抖音嵌在主窗口里，不再弹独立窗口 ----------------
+// WebContentsView（Electron 30+ 推荐）优先，拿不到时退回已弃用的 BrowserView。
+// 视图只在对应页面激活时显示，切走页面时隐藏（页面侧 onHide 调 hide 通道）；
+// 位置由页面侧上报占位元素的 rect（CSS 像素），这里按界面缩放换算成 DIP 后 setBounds。
+const ViewClass = WebContentsView || BrowserView;
+const USE_WCV = !!WebContentsView;
+const embeddedViews = new Map(); // kind -> { view, bounds, loaded, visible, url }
+
+function attachEmbeddedView(view) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (USE_WCV) mainWindow.contentView.addChildView(view);
+  else mainWindow.setBrowserView(view);
+  return true;
+}
+function detachEmbeddedView(view) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (USE_WCV) { try { mainWindow.contentView.removeChildView(view); } catch { /* ignore */ } }
+  else if (typeof mainWindow.getBrowserView === "function" && mainWindow.getBrowserView() === view) mainWindow.setBrowserView(null);
+}
+function applyViewBounds(st) {
+  if (!st || !st.bounds || !st.view || st.view.webContents.isDestroyed()) return;
+  const zoom = Number(settings.get("zoom")) || 1;
+  const b = st.bounds;
+  try {
+    st.view.setBounds({
+      x: Math.max(0, Math.round(b.x * zoom)),
+      y: Math.max(0, Math.round(b.y * zoom)),
+      width: Math.max(50, Math.round(b.width * zoom)),
+      height: Math.max(50, Math.round(b.height * zoom)),
+    });
+  } catch (err) { log.error("内嵌视图定位失败：" + err.message); }
+}
+function ensureEmbeddedView(kind, partition, url) {
+  let st = embeddedViews.get(kind);
+  if (st && !st.view.webContents.isDestroyed()) return st;
+  if (!ViewClass) throw new Error("当前 Electron 版本不支持内嵌视图（WebContentsView / BrowserView 均不可用）");
+  const view = new ViewClass({
+    webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  view.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (/^https:\/\//.test(u)) shell.openExternal(u);
+    return { action: "deny" };
+  });
+  // 还没收到页面上报的位置时先给一个占位尺寸，避免视图以 0 尺寸挂上去看不见；
+  // 页面显示后会立刻按占位元素的位置重算。
+  try { view.setBounds({ x: 260, y: 60, width: 640, height: 560 }); } catch { /* ignore */ }
+  st = { view, bounds: null, loaded: false, visible: false, url };
+  embeddedViews.set(kind, st);
+  return st;
+}
+function showEmbeddedView(kind) {
+  const st = embeddedViews.get(kind);
+  if (!st) return false;
+  applyViewBounds(st);
+  if (!attachEmbeddedView(st.view)) return false;
+  st.visible = true;
+  return true;
+}
+function hideEmbeddedView(kind) {
+  const st = embeddedViews.get(kind);
+  if (!st || !st.visible) return;
+  detachEmbeddedView(st.view);
+  st.visible = false;
+}
+function hideAllEmbeddedViews() { for (const kind of embeddedViews.keys()) hideEmbeddedView(kind); }
+function setEmbeddedViewBounds(kind, rect) {
+  const st = embeddedViews.get(kind);
+  if (!st) return false;
+  const r = rect && typeof rect === "object" ? rect : {};
+  const b = { x: Number(r.x) || 0, y: Number(r.y) || 0, width: Number(r.width) || 0, height: Number(r.height) || 0 };
+  if (b.width <= 0 || b.height <= 0) return false;
+  st.bounds = b;
+  if (st.visible) applyViewBounds(st);
+  return true;
+}
+// 某类视图的“操作面”：给 video-ipc 用，形状与旧的 jimengWindow 保持兼容
+// （webContents + session + show/focus），但背后是内嵌视图，不是独立窗口。
+function embeddedSurface(kind, partition, url) {
+  const st = ensureEmbeddedView(kind, partition, url);
+  return {
+    webContents: st.view.webContents,
+    session: st.view.webContents.session,
+    show: () => showEmbeddedView(kind),
+    focus: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus(); },
+  };
+}
+async function openEmbeddedView(kind, partition, url) {
+  const st = ensureEmbeddedView(kind, partition, url);
+  showEmbeddedView(kind);
+  if (!st.loaded) {
+    await st.view.webContents.loadURL(url);
+    st.loaded = true;
+  }
+  return { opened: true, url };
+}
+
+const JIMENG_EMBED_URL = "https://jimeng.jianying.com";
+const DOUYIN_EMBED_URL = "https://www.douyin.com";
+const embeddedViewsApi = {
+  jimeng: {
+    open: () => openEmbeddedView("jimeng", "persist:jimeng", JIMENG_EMBED_URL),
+    show: () => showEmbeddedView("jimeng"),
+    hide: () => hideEmbeddedView("jimeng"),
+    setBounds: (rect) => setEmbeddedViewBounds("jimeng", rect),
+    surface: () => embeddedSurface("jimeng", "persist:jimeng", JIMENG_EMBED_URL),
+    url: JIMENG_EMBED_URL,
+  },
+  douyin: {
+    open: () => openEmbeddedView("douyin", "persist:douyin", DOUYIN_EMBED_URL),
+    show: () => showEmbeddedView("douyin"),
+    hide: () => hideEmbeddedView("douyin"),
+    setBounds: (rect) => setEmbeddedViewBounds("douyin", rect),
+    surface: () => embeddedSurface("douyin", "persist:douyin", DOUYIN_EMBED_URL),
+    url: DOUYIN_EMBED_URL,
+  },
+};
+
 // 视频项目存储（M1）：<数据目录>/data/video/*.json
 // TTS Key 单独存（M2）：优先 safeStorage 加密，页面只拿到“已设置/末 4 位”，Key 只在主进程发 TTS 请求时用。
 const videoDir = path.join(DATA_DIR, "data", "video");
@@ -211,28 +333,10 @@ const ttsFetch = async (url, opts) => {
   const res = await net.fetch(url, opts);
   return { ok: res.ok, status: res.status, arrayBuffer: async () => res.arrayBuffer(), text: async () => res.text() };
 };
-// 即梦内嵌窗口（M3）：持久会话 persist:jimeng，登录一次后保持；
-// 生成与下载仍由用户或 jimeng.js 的自动操作在窗口里完成，主进程不读页面账号密码。
-let jimengWindow = null;
-function createJimengWindow() {
-  if (jimengWindow && !jimengWindow.isDestroyed()) { jimengWindow.show(); jimengWindow.focus(); return jimengWindow; }
-  const win = new BrowserWindow({
-    width: 1200, height: 800, title: "即梦",
-    webPreferences: { partition: "persist:jimeng", contextIsolation: true, nodeIntegration: false, sandbox: true },
-  });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) shell.openExternal(url);
-    return { action: "deny" };
-  });
-  win.on("closed", () => { if (jimengWindow === win) jimengWindow = null; });
-  jimengWindow = win;
-  win.loadURL("https://jimeng.jianying.com").catch((err) => log.error("打开即梦失败：" + err.message));
-  return win;
-}
 
 setupVideoIpc({
   ipcMain, store: videoStore, videoDir,
-  createJimengWindow,
+  embeddedViews: embeddedViewsApi,
   openPath: (p) => { try { shell.openPath(p); } catch { /* ignore */ } return true; },
   videoDefaults: { defaultShotCount: settings.get("videoDefaultShotCount"), aspect: settings.get("videoAspect") },
   getTtsSettings: () => ({
@@ -240,6 +344,8 @@ setupVideoIpc({
     ttsBaseUrl: settings.get("ttsBaseUrl"), ttsModel: settings.get("ttsModel"),
   }),
   getTtsKey: () => ttsSecrets.get("ttsApiKey"),
+  getAiSettings: () => ({ aiBaseUrl: settings.get("aiBaseUrl"), aiModel: settings.get("aiModel") }),
+  getAiKey: () => ttsSecrets.get("aiApiKey"),
   fetchImpl: ttsFetch,
   secrets: ttsSecrets,
 });
@@ -309,7 +415,7 @@ function runSmokeTest() {
         window.VideoApp.openProject(pid2);
         window.Shell.navigate("editor");
         for (let i = 0; i < 40 && !document.querySelector("#page-editor .shot-row"); i++) await new Promise((r) => setTimeout(r, 50));
-        const btnTexts = [...document.querySelectorAll("#page-editor .shot-row .btn")].map((b) => b.textContent.trim());
+        const btnTexts = [...document.querySelectorAll("#page-editor .btn")].map((b) => b.textContent.trim());
         videoM2Ok = imp.ok && imp.measured && shotAfter.audioSource === "import" && shotAfter.audioSeconds === 1
           && audio.ok && audio.dataUrl.startsWith("data:audio/wav;base64,")
           && providers.providers.some((p) => p.id === "openai") && providers.providers.some((p) => p.id === "jimeng" && !p.automated)
@@ -362,6 +468,23 @@ function runSmokeTest() {
         videoM3Debug = { imp3: imp3.ok, started: started.ok, startedError: started.error || "", ffOk: ff3.ok, rec: rec ? { status: rec.status, outputPath: rec.outputPath, srtPath: rec.srtPath, error: rec.error, message: rec.message } : null, renderBtns };
         await a.video.projects.remove(pid3);
       } catch (e) { videoM3Ok = false; videoM3Debug = { exception: e.message }; }
+      // 视频 M4：抖音分析页能打开（无 AI Key 时分析按钮明确禁用并提示去设置），
+      // 项目页以卡片展示（新建项目后出现 .project-card），再删掉。
+      let videoM4Ok = false;
+      try {
+        window.Shell.navigate("douyin");
+        for (let i = 0; i < 40 && !document.querySelector("#douyin-analyze-btn"); i++) await new Promise((r) => setTimeout(r, 50));
+        const analyzeBtn = document.querySelector("#douyin-analyze-btn");
+        const aiHint = document.querySelector("#douyin-ai-hint");
+        const douyinOk = !!analyzeBtn && analyzeBtn.disabled === true && !!aiHint
+          && !!document.querySelector("#douyin-view-placeholder");
+        const created4 = await a.video.projects.create({ title: "冒烟卡片" });
+        window.Shell.navigate("projects");
+        for (let i = 0; i < 40 && !document.querySelector("#page-projects .project-card"); i++) await new Promise((r) => setTimeout(r, 50));
+        const cardOk = !!document.querySelector("#page-projects .project-card");
+        await a.video.projects.remove(created4.project.id);
+        videoM4Ok = douyinOk && cardOk;
+      } catch (e) { videoM4Ok = false; }
       // 右侧运行日志面板能打开，外观设置能生效
       window.Shell.toggleLogDock(true);
       window.Shell.saveSettings({ background: "night", fontSize: 15 });
@@ -370,7 +493,7 @@ function runSmokeTest() {
       const look = document.documentElement.dataset.bg === "night" && getComputedStyle(document.body).fontSize === "15px";
       window.Shell.toggleLogDock(false);
       return {
-        videoM3Ok, videoM3Debug,
+        videoM3Ok, videoM3Debug, videoM4Ok,
         api: typeof a === "object" && typeof a.update.check === "function" && typeof a.settings.set === "function",
         nodeHidden: typeof require === "undefined" && typeof process === "undefined",
         name: document.getElementById("app-name").textContent.trim(),
@@ -385,8 +508,8 @@ function runSmokeTest() {
     })()`, true), TIMEOUT_MS, "页面脚本");
     const result = { ...out, layerVersion: LAYER_VERSION, boot: { source: BOOT.source, version: BOOT.version, bundled: BOOT.bundledVersion, electron: BOOT.electron }, platform: process.platform, rendererErrors: errors };
     const ok = out.api && out.nodeHidden && out.card && out.name === config.productName && out.version.includes(LAYER_VERSION)
-      && ["home", "projects", "editor", "render", "tasks", "logs", "settings"].every((p) => out.navs.includes(p)) && out.settingsVisible
-      && /^(light|dark)$/.test(out.theme) && out.task === "done" && out.logCount > 0 && out.dock && out.look && out.videoOk && out.videoM2Ok && out.videoM3Ok && !errors.length;
+      && ["home", "projects", "editor", "render", "douyin", "tasks", "logs", "settings"].every((p) => out.navs.includes(p)) && out.settingsVisible
+      && /^(light|dark)$/.test(out.theme) && out.task === "done" && out.logCount > 0 && out.dock && out.look && out.videoOk && out.videoM2Ok && out.videoM3Ok && out.videoM4Ok && !errors.length;
     console.log((ok ? "SMOKE OK " : "SMOKE FAIL ") + JSON.stringify(result));
     clearTimeout(hardStop);
     BOOT.markGood();
@@ -406,5 +529,5 @@ if (gotLock) {
   });
   // macOS 习惯：关掉窗口应用仍留在 Dock；其他系统直接退出
   app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-  app.on("before-quit", () => { tasks.cancelAll(); log.info("退出"); });
+  app.on("before-quit", () => { hideAllEmbeddedViews(); tasks.cancelAll(); log.info("退出"); });
 }

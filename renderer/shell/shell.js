@@ -84,28 +84,50 @@
   // 瀑布流：CSS grid + 每张卡按实际高度占 N 行（保持 DOM 顺序），列数按容器宽度算，
   // 卡片少于可放列数时卡片会变宽铺满，不会右边空一大块。窗口/日志面板/侧边栏变宽变窄都会实时重排。
   const MODULE_MIN_W = 320, MODULE_GAP = 18;
+  // 内嵌视图占位元素的位置变化会触发主进程 setBounds；这里的布局回调
+  // 必须在下一帧做（requestAnimationFrame），不能在 ResizeObserver 回调里
+  // 同步改样式：同步改被观察元素的尺寸会在同一帧里反复触发通知，
+  // Chromium 会报 "ResizeObserver loop completed with undelivered notifications"。
+  const pendingModuleBoxes = new Set();
+  let moduleLayoutQueued = false;
+  function scheduleModuleLayout(box) {
+    if (!box) return;
+    pendingModuleBoxes.add(box);
+    if (moduleLayoutQueued) return;
+    moduleLayoutQueued = true;
+    requestAnimationFrame(() => {
+      moduleLayoutQueued = false;
+      const boxes = [...pendingModuleBoxes];
+      pendingModuleBoxes.clear();
+      for (const b of boxes) layoutModules(b);
+    });
+  }
   const moduleObserver = typeof ResizeObserver === "function" ? new ResizeObserver((entries) => {
     const boxes = new Set();
     for (const e of entries) boxes.add(e.target.classList.contains("modules") ? e.target : e.target.parentElement);
-    for (const b of boxes) if (b) layoutModules(b);
+    for (const b of boxes) scheduleModuleLayout(b);
   }) : null;
   function layoutModules(box) {
     if (!box.isConnected) return;
     const items = [...box.children].filter((c) => !c.hidden);
     if (document.documentElement.dataset.layout === "classic") {
-      box.style.gridTemplateColumns = "";
-      for (const c of items) c.style.gridRowEnd = "";
+      if (box.style.gridTemplateColumns) box.style.gridTemplateColumns = "";
+      for (const c of items) if (c.style.gridRowEnd) c.style.gridRowEnd = "";
       return;
     }
     const w = box.clientWidth;
     if (!w) return;
     const fit = Math.max(1, Math.floor((w + MODULE_GAP) / (MODULE_MIN_W + MODULE_GAP)));
     const cols = Math.max(1, Math.min(fit, items.length || 1));
-    box.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    const colsValue = `repeat(${cols}, minmax(0, 1fr))`;
+    if (box.style.gridTemplateColumns !== colsValue) box.style.gridTemplateColumns = colsValue;
     for (const c of items) {
+      const oldSpan = c.style.gridRowEnd;
       c.style.gridRowEnd = "auto";
       const hgt = c.getBoundingClientRect().height;
-      c.style.gridRowEnd = `span ${Math.max(1, Math.ceil(hgt + MODULE_GAP))}`;
+      const spanValue = `span ${Math.max(1, Math.ceil(hgt + MODULE_GAP))}`;
+      if (oldSpan !== spanValue) c.style.gridRowEnd = spanValue;
+      else c.style.gridRowEnd = oldSpan;
     }
   }
   function modules(...children) {
@@ -116,7 +138,7 @@
       // 后加进来的卡片也要观察
       new MutationObserver((muts) => {
         for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) moduleObserver.observe(n);
-        layoutModules(box);
+        scheduleModuleLayout(box);
       }).observe(box, { childList: true });
     }
     return box;

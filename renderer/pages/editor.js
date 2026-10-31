@@ -1,5 +1,7 @@
 "use strict";
-// 分镜编辑器（M1 存储与编辑；M2 增加配音：生成、导入、试听、清除；M3 增加画面状态，片段生成与合成在“合成导出”页）。
+// 分镜编辑器（M1 存储与编辑；M2 增加配音：生成、导入、试听、清除；M3 增加画面状态，片段生成与合成在“合成导出”页；M4 改左右结构）。
+// 左栏：紧凑的镜头列表（可滚动，点一行选中）；右栏：选中镜头的详情表单 + 项目保存栏。
+// 镜头顺序、增删、配音操作的语义与之前一致：未保存的新镜头要先点“保存”才能操作配音。
 (function () {
   const { h, card, modules } = window.Shell;
   const api = window.app;
@@ -92,81 +94,123 @@
     const body = root._body;
     body.textContent = "";
     const p = draft.project;
+    let selectedIdx = 0;
+
     const titleInput = h("input", { class: "input grow", value: p.title });
     const tagsInput = h("input", { class: "input grow", value: (p.tags || []).join("、"), placeholder: "标签，用、或逗号分隔" });
     const aspectSelect = h("select", { class: "input" },
       ...[["9:16", "9:16 竖屏"], ["16:9", "16:9 横屏"], ["1:1", "1:1 方形"]].map(([v, l]) => h("option", { value: v }, l)));
     aspectSelect.value = p.aspect || "9:16";
     const totalEl = h("span", { class: "muted" });
-    const shotsBox = h("div", { id: "shot-list" });
+    const listBox = h("div", { id: "shot-list", class: "shot-list" });
+    const detailBox = h("div", { id: "shot-detail" });
 
-    const redraw = () => {
+    const updateTotals = () => {
       const ts = timings(draft.shots);
       totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 总时长 ${fmt(ts.length ? ts[ts.length - 1].end : 0)}（有配音的镜头按配音时长，无配音的按约 4.5 字/秒估算）`;
-      shotsBox.textContent = "";
+      return ts;
+    };
+
+    const redrawList = () => {
+      const ts = updateTotals();
+      listBox.textContent = "";
       draft.shots.forEach((s, i) => {
         const t = ts[i];
-        const narration = h("textarea", { class: "input field-full", rows: 3, placeholder: "这镜的口播文案" }, s.narration || "");
-        narration.addEventListener("input", () => { s.narration = narration.value; redrawTotals(); });
-        const visual = h("textarea", { class: "input field-full", rows: 2, placeholder: "画面描述：主体、场景、构图、光线" }, s.visual || "");
-        visual.addEventListener("input", () => { s.visual = visual.value; });
-        const imagePrompt = h("textarea", { class: "input field-full", rows: 2, placeholder: "生图提示词（M3 用，可空，默认用画面描述）" }, s.imagePrompt || "");
-        imagePrompt.addEventListener("input", () => { s.imagePrompt = imagePrompt.value; });
-        const row = h("section", { class: "card module shot-row" },
+        const preview = (s.narration || "").trim().slice(0, 40) || "（空口播）";
+        const status = s.error ? "失败" : s.audioAssetId ? "有配音" : "待配音";
+        const row = h("div", {
+          class: "shot-row" + (i === selectedIdx ? " selected" : ""),
+          onclick: () => { selectedIdx = i; redrawList(); renderDetail(); },
+        },
+          h("div", { class: "shot-row-head" },
+            h("b", {}, `第 ${i + 1} 镜`),
+            h("span", { class: "card-tag" }, fmtRange(t.start, t.end)),
+            h("span", { class: "muted small" }, status)),
+          h("div", { class: "muted shot-row-preview" }, preview));
+        listBox.append(row);
+      });
+      if (!draft.shots.length) listBox.append(h("p", { class: "muted" }, "还没有镜头，点下面“添加镜头”。"));
+    };
+
+    const renderDetail = () => {
+      detailBox.textContent = "";
+      const s = draft.shots[selectedIdx];
+      if (!s) {
+        detailBox.append(h("p", { class: "muted" }, "左侧选一个镜头，这里显示它的详情。"));
+        return;
+      }
+      const i = selectedIdx;
+      const ts = timings(draft.shots);
+      const t = ts[i];
+      const narration = h("textarea", { class: "input field-full", rows: 4, placeholder: "这镜的口播文案" }, s.narration || "");
+      narration.addEventListener("input", () => { s.narration = narration.value; updateTotals(); redrawListLight(); });
+      const visual = h("textarea", { class: "input field-full", rows: 3, placeholder: "画面描述：主体、场景、构图、光线" }, s.visual || "");
+      visual.addEventListener("input", () => { s.visual = visual.value; });
+      const imagePrompt = h("textarea", { class: "input field-full", rows: 3, placeholder: "生图提示词（M3 用，可空，默认用画面描述）" }, s.imagePrompt || "");
+      imagePrompt.addEventListener("input", () => { s.imagePrompt = imagePrompt.value; });
+
+      const listenBtn = h("button", { class: "btn small", disabled: !s.audioAssetId, onclick: () => listenShot(s, listenBtn) }, "试听");
+      const genBtn = h("button", { class: "btn small", onclick: () => generateShot(s, genBtn) }, "生成配音");
+      const importInput = h("input", { type: "file", accept: ".mp3,.wav,.m4a,.ogg,.flac,.aac,.opus,audio/*", hidden: true,
+        onchange: async () => { const f = importInput.files && importInput.files[0]; if (!f) return; await importShot(s, f); importInput.value = ""; } });
+      const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入音频");
+      const clearBtn = h("button", { class: "btn small danger-ghost", disabled: !s.audioAssetId,
+        onclick: async () => {
+          if (!needSaved(s)) return;
+          const r = await api.video.shots.clearAudio(s.id);
+          if (r.ok) { window.Shell.toast("已清除该镜头配音"); await load(root, currentId); }
+          else window.Shell.toast(r.error || "清除失败", "error");
+        } }, "清除配音");
+
+      detailBox.append(
+        h("section", { class: "card module shot-detail" },
           h("header", { class: "card-head" },
             h("h2", {}, `第 ${i + 1} 镜`),
             h("span", { class: "card-tag" }, fmtRange(t.start, t.end)),
             h("span", { class: "spacer" }),
-            h("button", { class: "btn small", disabled: i === 0, onclick: () => { move(i, -1); } }, "上移"),
-            h("button", { class: "btn small", disabled: i === draft.shots.length - 1, onclick: () => { move(i, 1); } }, "下移"),
-            h("button", { class: "btn small danger-ghost", onclick: () => { removeShot(i); } }, "删除")),
+            h("button", { class: "btn small", disabled: i === 0, onclick: () => move(i, -1) }, "上移"),
+            h("button", { class: "btn small", disabled: i === draft.shots.length - 1, onclick: () => move(i, 1) }, "下移"),
+            h("button", { class: "btn small danger-ghost", onclick: () => removeShot(i) }, "删除")),
           h("p", { class: "card-desc" }, "口播（" + fmt(t.seconds) + "）"),
           narration,
           h("p", { class: "card-desc" }, "画面描述"),
           visual,
           h("p", { class: "card-desc" }, "生图提示词"),
-          imagePrompt);
-        const listenBtn = h("button", { class: "btn small", disabled: !s.audioAssetId, onclick: () => listenShot(s, listenBtn) }, "试听");
-        const genBtn = h("button", { class: "btn small", onclick: () => generateShot(s, genBtn) }, "生成配音");
-        const importInput = h("input", { type: "file", accept: ".mp3,.wav,.m4a,.ogg,.flac,.aac,.opus,audio/*", hidden: true,
-          onchange: async () => { const f = importInput.files && importInput.files[0]; if (!f) return; await importShot(s, f); importInput.value = ""; } });
-        const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入音频");
-        const clearBtn = h("button", { class: "btn small danger-ghost", disabled: !s.audioAssetId,
-          onclick: async () => {
-            if (!needSaved(s)) return;
-            const r = await api.video.shots.clearAudio(s.id);
-            if (r.ok) { window.Shell.toast("已清除该镜头配音"); await load(root, currentId); }
-            else window.Shell.toast(r.error || "清除失败", "error");
-          } }, "清除配音");
-        row.append(
+          imagePrompt,
           h("p", { class: "card-desc" }, "配音"),
           h("p", { class: "muted" }, "", audioText(s)),
           h("div", { class: "actions" }, genBtn, importBtn, listenBtn, clearBtn, importInput),
           h("p", { class: "card-desc" }, "画面"),
-          h("p", { class: "muted" }, "", videoText(s)));
-        shotsBox.append(row);
-      });
-      function redrawTotals() {
-        const ts2 = timings(draft.shots);
-        totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 总时长 ${fmt(ts2.length ? ts2[ts2.length - 1].end : 0)}（有配音的镜头按配音时长，无配音的按约 4.5 字/秒估算）`;
-        // 只更新每镜的时间标签，不重建输入框，避免打字时丢焦点
-        [...shotsBox.querySelectorAll(".shot-row")].forEach((rowEl, idx) => {
-          const tag = rowEl.querySelector(".card-tag");
-          if (tag && ts2[idx]) tag.textContent = fmtRange(ts2[idx].start, ts2[idx].end);
-        });
-      }
+          h("p", { class: "muted" }, "", videoText(s))));
     };
+
+    // 只更新列表里的时间标签和预览，不重建输入框，避免打字时丢焦点
+    const redrawListLight = () => {
+      const ts = timings(draft.shots);
+      [...listBox.querySelectorAll(".shot-row")].forEach((rowEl, idx) => {
+        const tag = rowEl.querySelector(".card-tag");
+        if (tag && ts[idx]) tag.textContent = fmtRange(ts[idx].start, ts[idx].end);
+        const prev = rowEl.querySelector(".shot-row-preview");
+        const s = draft.shots[idx];
+        if (prev && s) prev.textContent = (s.narration || "").trim().slice(0, 40) || "（空口播）";
+      });
+    };
+
     const move = (i, d) => {
       const j = i + d;
       if (j < 0 || j >= draft.shots.length) return;
       const [s] = draft.shots.splice(i, 1);
       draft.shots.splice(j, 0, s);
-      redraw();
+      selectedIdx = j;
+      redrawList();
+      renderDetail();
     };
     const removeShot = (i) => {
       const [s] = draft.shots.splice(i, 1);
       if (s && !s._new && s.id) deletedIds.push(s.id);
-      redraw();
+      selectedIdx = Math.max(0, Math.min(selectedIdx, draft.shots.length - 1));
+      redrawList();
+      renderDetail();
     };
     // ---- M2 配音操作：都需要已保存的镜头（未保存的新镜头没有服务端 id） ----
     const needSaved = (s) => {
@@ -225,23 +269,6 @@
       } finally { btn.disabled = false; btn.textContent = old; }
     };
 
-    body.append(
-      h("header", { class: "page-head" },
-        h("div", {}, h("h1", {}, "分镜编辑"),
-          h("p", { class: "sub" }, "改完点“保存”，离开页面前没保存的改动会丢。"))),
-      modules(card({ title: "项目", icon: "folder" },
-        h("div", { class: "actions" }, titleInput, tagsInput, aspectSelect),
-        h("p", { class: "muted" }, "", totalEl),
-        h("div", { class: "actions" },
-          h("button", { class: "btn primary", id: "btn-save", onclick: save }, "保存"),
-          h("button", { class: "btn", onclick: async () => { await load(root, currentId); window.Shell.toast("已放弃未保存的改动"); } }, "放弃改动"),
-          h("button", { class: "btn", id: "btn-voice-all", onclick: (e) => generateAll(e.currentTarget) }, "生成配音"),
-          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "去合成导出"),
-          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "即梦片段与合成")))),
-      shotsBox,
-      h("div", { class: "actions" },
-        h("button", { class: "btn", onclick: () => { draft.shots.push({ _new: true, _tmp: "new-" + (++newSeq), narration: "", visual: "", imagePrompt: "", status: "pending" }); redraw(); } }, "＋ 添加镜头")));
-
     async function save() {
       const btn = body.querySelector("#btn-save");
       if (btn) btn.disabled = true;
@@ -266,6 +293,32 @@
       } catch (e) { window.Shell.toast(e.message, "error"); }
       finally { const b = body.querySelector("#btn-save"); if (b) b.disabled = false; }
     }
-    redraw();
+
+    body.append(
+      h("header", { class: "page-head" },
+        h("div", {}, h("h1", {}, "分镜编辑"),
+          h("p", { class: "sub" }, "改完点“保存”，离开页面前没保存的改动会丢。"))),
+      modules(card({ title: "项目", icon: "folder" },
+        h("div", { class: "actions" }, titleInput, tagsInput, aspectSelect),
+        h("p", { class: "muted" }, "", totalEl),
+        h("div", { class: "actions" },
+          h("button", { class: "btn primary", id: "btn-save", onclick: save }, "保存"),
+          h("button", { class: "btn", onclick: async () => { await load(root, currentId); window.Shell.toast("已放弃未保存的改动"); } }, "放弃改动"),
+          h("button", { class: "btn", id: "btn-voice-all", onclick: (e) => generateAll(e.currentTarget) }, "生成配音"),
+          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "去合成导出"),
+          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "即梦片段与合成")))),
+      h("div", { class: "split-layout editor-layout" },
+        h("div", { class: "split-left" },
+          listBox,
+          h("div", { class: "actions" },
+            h("button", { class: "btn", onclick: () => {
+              draft.shots.push({ _new: true, _tmp: "new-" + (++newSeq), narration: "", visual: "", imagePrompt: "", status: "pending" });
+              selectedIdx = draft.shots.length - 1;
+              redrawList(); renderDetail();
+            } }, "＋ 添加镜头"))),
+        h("div", { class: "split-right" }, detailBox)));
+
+    redrawList();
+    renderDetail();
   }
 })();

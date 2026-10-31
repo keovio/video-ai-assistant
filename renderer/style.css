@@ -397,3 +397,37 @@ details.set-details[open] > summary { margin-bottom: 8px; }
 .field-full { width: 100%; box-sizing: border-box; }
 .project-row { margin-bottom: 10px; }
 .project-row-main { flex: 1; min-width: 200px; }
+
+/* ---------- M4：左右结构与卡片 ---------- */
+/* 两栏：左栏固定较窄、可独立滚动；右栏自适应。页面本身滚动时左栏内容跟随页面滚， */
+.split-layout { display: flex; gap: 18px; align-items: flex-start; }
+.split-layout .split-left { flex: 0 0 320px; min-width: 0; }
+.split-layout .split-right { flex: 1; min-width: 0; }
+.split-layout.douyin-layout .split-left, .split-layout.render-layout .split-left { flex: 1 1 52%; }
+.split-layout.douyin-layout .split-right, .split-layout.render-layout .split-right { flex: 1 1 48%; }
+@media (max-width: 900px) {
+  .split-layout { flex-direction: column; }
+  .split-layout .split-left, .split-layout .split-right { flex: none; width: 100%; }
+}
+/* 分镜编辑：左栏镜头列表（紧凑行），右栏详情 */
+.shot-list { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 320px); min-height: 200px; overflow-y: auto; padding-right: 4px; }
+.shot-row { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+.shot-row:hover { border-color: var(--primary); }
+.shot-row.selected { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.shot-row-head { display: flex; align-items: center; gap: 8px; }
+.shot-row-preview { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 项目卡片网格：一项目一张卡 */
+.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
+.project-card { display: flex; flex-direction: column; gap: 6px; }
+.project-card .actions { margin-top: auto; }
+/* 内嵌视图占位区：视图打开后会盖住这块区域 */
+.embed-placeholder { min-height: 460px; border: 1px dashed var(--line); border-radius: var(--radius); padding: 18px; background: var(--surface-2); }
+.embed-placeholder p { margin: 0 0 8px; }
+/* 设置分组内左右结构：左分类、右表单 */
+.settings-split { display: flex; gap: 18px; align-items: flex-start; }
+.settings-nav { display: flex; flex-direction: column; gap: 6px; flex: none; width: 110px; }
+.settings-nav .btn.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); font-weight: 600; }
+.settings-panel { flex: 1; min-width: 0; }
+/* 抖音分析：已保存记录行 */
+.saved-row { margin-bottom: 10px; }
+.saved-row-main { flex: 1; min-width: 200px; }

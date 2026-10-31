@@ -1,11 +1,13 @@
 "use strict";
-// 合成导出页（M3）：ffmpeg 状态、每镜音画状态、开始合成、失败重跑、
-// 打开输出文件夹 / 用系统播放器打开成片。即梦片段生成与导入也在此页，
-// 自动操作失败时会把即梦窗口交给用户手动完成，再用“导入片段”导进来。
+// 合成导出页（M3：ffmpeg 状态、每镜音画状态、开始合成、失败重跑、
+// 打开输出文件夹 / 用系统播放器打开成片。即梦片段生成与导入也在此页；
+// M4 起即梦不再弹独立窗口，嵌在左侧的内嵌视图里，自动操作失败时视图
+// 保持可见供用户手动完成，再用“导入片段”导进来）。
 (function () {
   const { h, card, modules } = window.Shell;
   const api = window.app;
   const fmt = (s) => (Math.round(Number(s || 0) * 10) / 10) + " 秒";
+  const debounce = window.Shell.debounce || ((fn) => fn);
   let pollTimer = null;
   let currentId = null;
 
@@ -20,6 +22,7 @@
     icon: "film",
     order: 25,
     render(root) {
+      root.classList.add("page-wide");
       root._body = h("div", { id: "render-body" });
       root.append(root._body);
       currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
@@ -28,10 +31,29 @@
     async onShow(root) {
       currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
       if (root._body) load(root).catch((e) => window.Shell.toast(e.message, "error"));
+      reportBounds(root);
+    },
+    async onHide() {
+      stopPoll();
+      try { await api.video.jimeng.hide(); } catch { /* ignore */ }
     },
   });
 
   function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  // 上报即梦占位元素位置给主进程（内嵌视图按这个 rect 定位），防抖。
+  function reportBounds(root) {
+    const el = root.querySelector("#jimeng-view-placeholder");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    api.video.jimeng.setBounds({ x: r.x, y: r.y, width: r.width, height: r.height }).catch(() => {});
+  }
+  const reportBoundsDebounced = debounce((root) => reportBounds(root), 120);
+  window.addEventListener("resize", () => {
+    const root = document.getElementById("page-render");
+    if (root && !root.hidden) reportBoundsDebounced(root);
+  });
 
   async function load(root) {
     stopPoll();
@@ -52,6 +74,25 @@
     const latest = list[0] || null;
     const running = list.some((r) => r.status === "queued" || r.status === "running");
     const burnInput = h("input", { type: "checkbox", checked: true });
+
+    // ---- 左栏：即梦内嵌视图 + 镜头列表 ----
+    const jimengPlaceholder = h("div", { id: "jimeng-view-placeholder", class: "embed-placeholder" },
+      h("p", { class: "muted" }, "点“打开即梦”后，即梦页面会嵌在这里显示（登录一次后保持登录）。"),
+      h("p", { class: "muted small" }, "自动操作失败时视图保持可见，在里面手动生成并下载，再用下面对应镜头的“导入片段”导进来。"));
+    const jimengBtn = h("button", { class: "btn", onclick: async () => {
+      jimengBtn.disabled = true;
+      try {
+        const r = await api.video.jimeng.open();
+        if (!r.ok) window.Shell.toast(r.error || "打开即梦失败", "error");
+        else window.Shell.toast("即梦已在左侧打开（登录一次后保持登录）", "success");
+        reportBounds(root);
+      } catch (e) { window.Shell.toast(e.message, "error"); }
+      finally { jimengBtn.disabled = false; }
+    } }, "打开即梦");
+    const jimengCard = card({ title: "即梦（内嵌）", icon: "film" },
+      h("div", { class: "actions" }, jimengBtn),
+      jimengPlaceholder);
+
     const shotsBox = h("div", {});
     data.shots.forEach((s, i) => {
       const videoText = s.videoAssetId
@@ -92,7 +133,9 @@
         h("p", { class: "muted" }, "", audioText + "；" + videoText),
         h("div", { class: "actions" }, genBtn, importBtn, clearBtn, importInput)));
     });
+    const shotsCard = card({ title: "镜头与片段", icon: "film" }, shotsBox);
 
+    // ---- 右栏：合成控制 + 最近一次合成 ----
     const startBtn = h("button", { class: "btn primary", disabled: running || !ff.ok, onclick: async () => {
       startBtn.disabled = true;
       try {
@@ -116,31 +159,31 @@
       const r = await api.video.renders.openOutput(latest.id);
       if (!r.ok) window.Shell.toast(r.error || "打开失败", "error");
     } }, "用系统播放器打开成片");
-    const jimengBtn = h("button", { class: "btn", onclick: async () => {
-      const r = await api.video.jimeng.open();
-      if (!r.ok) window.Shell.toast(r.error || "打开即梦失败", "error");
-      else window.Shell.toast("即梦窗口已打开（登录一次后保持登录）", "success");
-    } }, "打开即梦");
+
+    const controlsCard = card({ title: "合成", icon: "film" },
+      h("p", {}, data.project.title),
+      h("p", { class: "muted" }, "", `共 ${data.shots.length} 个镜头 · 总时长 ${fmt(data.project.totalSeconds)} · 比例 ${data.project.aspect}`),
+      h("p", { class: "muted" }, "", ff.ok ? "系统 ffmpeg/ffprobe：可用" : "系统 ffmpeg/ffprobe：" + (ff.warning || "不可用，合成前请先安装")),
+      h("div", { class: "actions" }, startBtn, retryBtn, folderBtn, playBtn),
+      h("label", { class: "muted" }, "烧入字幕（默认开；烧入失败时自动改为仅输出 SRT，页面会如实提示）", burnInput));
+
+    const latestCard = latest ? card({ title: "最近一次合成", icon: "film" },
+      h("p", {}, `状态：${latest.status} · ${latest.message || ""}`),
+      h("p", { class: "muted" }, "", latest.outputPath ? `成片：${latest.outputPath}` : "暂无成片"),
+      h("p", { class: "muted" }, "", latest.srtPath ? `字幕：${latest.srtPath}` : ""),
+      ...(latest.warnings || []).map((w) => h("p", { class: "muted" }, "", "注意：" + w)),
+      h("p", { class: "muted" }, "", `进度：${latest.pct}%`)) : null;
 
     body.textContent = "";
     body.append(
       h("header", { class: "page-head" },
         h("div", {}, h("h1", {}, "合成导出"),
           h("p", { class: "sub" }, "合成前请确认每镜都有配音；无画面的镜头会用黑场兜底，配音不会丢。"))),
-      modules(card({ title: "项目", icon: "folder" },
-        h("p", {}, data.project.title),
-        h("p", { class: "muted" }, "", `共 ${data.shots.length} 个镜头 · 总时长 ${fmt(data.project.totalSeconds)} · 比例 ${data.project.aspect}`),
-        h("p", { class: "muted" }, "", ff.ok ? "系统 ffmpeg/ffprobe：可用" : "系统 ffmpeg/ffprobe：" + (ff.warning || "不可用，合成前请先安装")),
-        h("div", { class: "actions" }, startBtn, retryBtn, folderBtn, playBtn, jimengBtn),
-        h("label", { class: "muted" }, "烧入字幕（默认开；烧入失败时自动改为仅输出 SRT，页面会如实提示）", burnInput))),
-      latest ? modules(card({ title: "最近一次合成", icon: "film" },
-        h("p", {}, `状态：${latest.status} · ${latest.message || ""}`),
-        h("p", { class: "muted" }, "", latest.outputPath ? `成片：${latest.outputPath}` : "暂无成片"),
-        h("p", { class: "muted" }, "", latest.srtPath ? `字幕：${latest.srtPath}` : ""),
-        ...(latest.warnings || []).map((w) => h("p", { class: "muted" }, "", "注意：" + w)),
-        h("p", { class: "muted" }, "", `进度：${latest.pct}%`))) : h("p", { class: "muted" }, "暂无合成记录"),
-      h("h2", {}, "镜头与片段"),
-      shotsBox);
+      h("div", { class: "split-layout render-layout" },
+        h("div", { class: "split-left" }, modules(jimengCard), modules(shotsCard)),
+        h("div", { class: "split-right" }, modules(controlsCard), latestCard ? modules(latestCard) : h("p", { class: "muted" }, "暂无合成记录"))));
+
+    requestAnimationFrame(() => reportBounds(root));
 
     if (running) {
       stopPoll();

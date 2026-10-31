@@ -26,7 +26,7 @@
       const aspectSelect = h("select", { class: "input" },
         ...[["9:16", "9:16 竖屏"], ["16:9", "16:9 横屏"], ["1:1", "1:1 方形"]].map(([v, l]) => h("option", { value: v }, l)));
       try { aspectSelect.value = (window.Shell.getSettings().videoAspect) || "9:16"; } catch { /* ignore */ }
-      const listBox = h("div", { id: "project-list" });
+      const listBox = h("div", { id: "project-list", class: "project-grid" });
       const newCard = card({ title: "新建项目", icon: "note" },
         h("div", { class: "actions" }, titleInput, shotSelect, aspectSelect,
           h("button", { class: "btn primary", onclick: async () => {
@@ -39,11 +39,11 @@
               window.Shell.navigate("editor");
             } catch (e) { window.Shell.toast(e.message, "error"); }
           } }, "新建并打开")));
-      const listCard = card({ title: "全部项目", icon: "folder" }, listBox);
       root.append(
         h("header", { class: "page-head" },
           h("div", {}, h("h1", {}, "视频项目"), h("p", { class: "sub" }, "一个项目就是一条口播视频：先写脚本和分镜，配音、画面、合成在 M2/M3 做。"))),
-        modules(newCard, listCard));
+        modules(newCard),
+        listBox);
       root._listBox = listBox;
       refresh(root).catch((e) => window.Shell.toast(e.message, "error"));
     },
@@ -62,20 +62,21 @@
     }
     for (const p of r.projects) {
       const meta = `${STATUS_LABEL[p.status] || p.status} · ${p.aspect} · ${p.shotCount} 个镜头 · 预估 ${fmtSecs(p.totalSeconds)}`;
-      box.append(h("div", { class: "actions project-row" },
-        h("div", { class: "project-row-main" },
-          h("b", {}, p.title), h("div", { class: "muted" }, meta),
-          p.tags && p.tags.length ? h("div", { class: "muted" }, "标签：" + p.tags.join("、")) : null),
-        h("button", { class: "btn small primary", onclick: () => { window.VideoApp.openProject(p.id); window.Shell.navigate("editor"); } }, "打开"),
-        h("button", { class: "btn small", onclick: async () => {
-          try { const d = await unwrap(await api.video.projects.duplicate(p.id)); window.Shell.toast("已复制为“" + d.project.title + "”"); await refresh(root); }
-          catch (e) { window.Shell.toast(e.message, "error"); }
-        } }, "复制"),
-        h("button", { class: "btn small danger-ghost", onclick: async () => {
-          if (!await window.Shell.confirm(`确定删除项目“${p.title}”吗？它的镜头和渲染记录会一起删除，资产文件保留。`)) return;
-          try { await unwrap(await api.video.projects.remove(p.id)); await refresh(root); }
-          catch (e) { window.Shell.toast(e.message, "error"); }
-        } }, "删除")));
+      box.append(h("section", { class: "card project-card" },
+        h("header", { class: "card-head" }, h("h2", {}, p.title), h("span", { class: "card-tag" }, STATUS_LABEL[p.status] || p.status)),
+        h("p", { class: "muted" }, meta),
+        p.tags && p.tags.length ? h("p", { class: "muted" }, "标签：" + p.tags.join("、")) : null,
+        h("div", { class: "actions" },
+          h("button", { class: "btn small primary", onclick: () => { window.VideoApp.openProject(p.id); window.Shell.navigate("editor"); } }, "打开"),
+          h("button", { class: "btn small", onclick: async () => {
+            try { const d = await unwrap(await api.video.projects.duplicate(p.id)); window.Shell.toast("已复制为“" + d.project.title + "”"); await refresh(root); }
+            catch (e) { window.Shell.toast(e.message, "error"); }
+          } }, "复制"),
+          h("button", { class: "btn small danger-ghost", onclick: async () => {
+            if (!await window.Shell.confirm(`确定删除项目“${p.title}”吗？它的镜头和渲染记录会一起删除，资产文件保留。`)) return;
+            try { await unwrap(await api.video.projects.remove(p.id)); await refresh(root); }
+            catch (e) { window.Shell.toast(e.message, "error"); }
+          } }, "删除"))));
     }
   }
 
