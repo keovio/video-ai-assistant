@@ -508,3 +508,7 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .switch-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; margin: 8px 0; }
 .gap-6 { height: 6px; } .gap-8 { height: 8px; }
 .browser-empty .actions { justify-content: center; }
+.browser-zoom-group { display: flex; align-items: center; gap: 0; flex: none; }
+.browser-zoom { min-width: 46px; height: 26px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.browser-zoom:hover { background: var(--hover); color: var(--text); }
+.browser-zoom.changed { color: var(--primary); font-weight: 600; }

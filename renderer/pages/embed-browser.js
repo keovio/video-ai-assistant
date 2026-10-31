@@ -63,6 +63,12 @@
     const reload = btn("refresh", "刷新", () => nav(e.loading ? "stop" : "reload"));
     const home = btn("home", "主页", () => (e.opened ? nav("home") : open()));
     const ext = btn("external", "在系统浏览器打开", () => nav("external"));
+    // 缩放：- 百分比 +，点百分比回到 100%；按站点记在本机（localStorage），下次打开自动套用
+    const zoomKey = `embed.zoom.${kind}`;
+    const savedZoom = () => { const z = Number(localStorage.getItem(zoomKey)); return z >= 0.5 && z <= 2 ? z : 1; };
+    const zoomOut = btn("minus", "缩小（Ctrl/⌘ -）", () => nav("zoomOut"));
+    const zoomIn = btn("plus", "放大（Ctrl/⌘ +）", () => nav("zoomIn"));
+    const zoomLabel = h("button", { class: "browser-zoom", title: "恢复 100%（Ctrl/⌘ 0）", onclick: () => nav("zoom", 1) }, "100%");
     const lock = h("span", { class: "browser-lock" }, icon("lock"));
     const addr = h("input", { class: "browser-addr", spellcheck: "false", placeholder: kind === "douyin" ? "输入网址，或搜索抖音" : "输入网址" });
     addr.addEventListener("keydown", (ev) => {
@@ -77,7 +83,8 @@
     const viewport = h("div", { class: "browser-viewport", id: `${kind}-view-placeholder` }, status);
     const el = h("div", { class: "browser", "data-kind": kind },
       h("div", { class: "browser-bar" }, back, fwd, reload, home,
-        h("div", { class: "browser-addr-wrap" }, lock, addr), ext),
+        h("div", { class: "browser-addr-wrap" }, lock, addr),
+        h("div", { class: "browser-zoom-group" }, zoomOut, zoomLabel, zoomIn), ext),
       progress, viewport);
 
     const e = { kind, pageId, api, viewport, active: false, opened: false, shown: false, loading: false, url: "", opening: null };
@@ -95,9 +102,17 @@
       reload.title = e.loading ? "停止" : "刷新";
       progress.classList.toggle("on", e.loading);
       lock.hidden = !/^https:/.test(e.url);
+      if (st.zoom) {
+        const z = Number(st.zoom) || 1;
+        zoomLabel.textContent = Math.round(z * 100) + "%";
+        zoomLabel.classList.toggle("changed", Math.abs(z - 1) > 0.001);
+        zoomOut.disabled = !e.opened || z <= 0.5;
+        zoomIn.disabled = !e.opened || z >= 2;
+        if (e.opened) localStorage.setItem(zoomKey, String(z));
+      }
       if (document.activeElement !== addr) addr.value = e.url || "";
     }
-    draw({ canGoBack: false, canGoForward: false });
+    draw({ canGoBack: false, canGoForward: false, zoom: savedZoom() });
     app.video.embed.onState((st) => { if (st && st.kind === kind) draw(st); });
 
     async function open() {
@@ -110,6 +125,7 @@
           if (!r || !r.ok) throw new Error((r && r.error) || `打开${title}失败`);
           e.opened = true;
           e.shown = true; // open() 已把视图挂上
+          if (savedZoom() !== 1) await nav("zoom", savedZoom());
           // 页面已切走时立即收起
           if (!e.active) { e.shown = false; api.hide().catch(() => {}); }
           const s = await app.video.embed.nav(kind, "state").catch(() => null);

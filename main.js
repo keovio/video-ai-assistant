@@ -263,6 +263,20 @@ function ensureEmbeddedView(kind, partition, url) {
   });
   // 导航状态（地址、标题、能否前进后退、是否在加载）推给页面上的浏览器工具栏
   const push = () => pushEmbedState(kind);
+  // 页面缩放：跨站跳转后 Chromium 会重置，按本视图记住的比例重新套上
+  view.webContents.on("did-navigate", () => {
+    const cur = embeddedViews.get(kind);
+    if (cur && cur.zoom && cur.zoom !== 1) { try { view.webContents.setZoomFactor(cur.zoom); } catch { /* ignore */ } }
+  });
+  // 视图里按 Ctrl/Cmd + 加号/减号/0 缩放（焦点在网页里时页面的快捷键收不到）
+  view.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || !(input.control || input.meta) || input.alt) return;
+    const k = input.key;
+    const step = k === "=" || k === "+" ? 1 : k === "-" || k === "_" ? -1 : k === "0" ? 0 : null;
+    if (step === null) return;
+    event.preventDefault();
+    setEmbedZoom(kind, step === 0 ? 1 : stepZoom(embedZoom(kind), step));
+  });
   for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-start-loading", "did-stop-loading", "did-fail-load"]) {
     view.webContents.on(ev, push);
   }
@@ -277,13 +291,28 @@ function ensureEmbeddedView(kind, partition, url) {
   embeddedViews.set(kind, st);
   return st;
 }
+const ZOOM_STEPS = [0.5, 0.6, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+function embedZoom(kind) { const st = embeddedViews.get(kind); return (st && st.zoom) || 1; }
+function stepZoom(cur, dir) {
+  if (dir > 0) return ZOOM_STEPS.find((z) => z > cur + 0.001) || ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  return [...ZOOM_STEPS].reverse().find((z) => z < cur - 0.001) || ZOOM_STEPS[0];
+}
+function setEmbedZoom(kind, factor) {
+  const st = embeddedViews.get(kind);
+  const z = Math.min(2, Math.max(0.5, Number(factor) || 1));
+  if (!st) return z;
+  st.zoom = z;
+  try { if (!st.view.webContents.isDestroyed()) st.view.webContents.setZoomFactor(z); } catch { /* ignore */ }
+  pushEmbedState(kind);
+  return z;
+}
 function embedState(kind) {
   const st = embeddedViews.get(kind);
   if (!st || st.view.webContents.isDestroyed()) return { kind, opened: false };
   const wc = st.view.webContents;
   const nav = wc.navigationHistory;
   return {
-    kind, opened: st.loaded || !!wc.getURL(), url: wc.getURL() || st.url, title: wc.getTitle(), loading: wc.isLoading(),
+    kind, opened: st.loaded || !!wc.getURL(), url: wc.getURL() || st.url, title: wc.getTitle(), loading: wc.isLoading(), zoom: st.zoom || 1,
     canGoBack: nav ? nav.canGoBack() : wc.canGoBack(),
     canGoForward: nav ? nav.canGoForward() : wc.canGoForward(),
   };
@@ -316,6 +345,9 @@ ipcMain.handle("video:embed.nav", async (_e, kind, action, arg) => {
     else if (action === "stop") wc.stop();
     else if (action === "home") wc.loadURL(EMBED_CONFIG[kind][1]).catch(() => {});
     else if (action === "go") { const u = normalizeAddress(kind, arg); if (u) wc.loadURL(u).catch(() => {}); }
+    else if (action === "zoom") setEmbedZoom(kind, arg);
+    else if (action === "zoomIn") setEmbedZoom(kind, stepZoom(embedZoom(kind), 1));
+    else if (action === "zoomOut") setEmbedZoom(kind, stepZoom(embedZoom(kind), -1));
     else if (action === "external") { const u = wc.getURL(); if (/^https?:\/\//.test(u)) shell.openExternal(u); }
     else return { ok: false, error: "未知操作" };
   } catch (err) { return { ok: false, error: (err && err.message) || String(err) }; }
