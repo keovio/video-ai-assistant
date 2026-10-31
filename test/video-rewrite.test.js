@@ -15,3 +15,11 @@ test("没有参考时按优化模式写提示", () => {
   const m = buildRewritePrompt({ shots: [{ visual: "a" }], mode: "imitate", reference: "" });
   assert.match(m[1].content, /生视频网站/);
 });
+
+test("TikTok 链接识别与解析", () => {
+  const { siteOf, parseExtracted } = require("../lib/video/douyin");
+  assert.strictEqual(siteOf("https://www.tiktok.com/@a/video/7400000000000000001"), "tiktok");
+  const info = parseExtracted({ site: "tiktok", url: "https://www.tiktok.com/@a/video/7400000000000000001", caption: "hi", likeCountText: "12" });
+  assert.strictEqual(info.site, "tiktok");
+  assert.strictEqual(info.videoId, "7400000000000000001");
+});

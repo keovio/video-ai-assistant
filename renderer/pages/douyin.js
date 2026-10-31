@@ -204,7 +204,7 @@
     return det;
   }
 
-  const SAVED_SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", web: "网页" };
+  const SAVED_SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", web: "网页" };
   // 在左边内嵌浏览器新标签里打开原视频
   function openSource(url) {
     if (!/^https?:\/\//i.test(String(url || ""))) { window.Shell.toast("原地址无效", "error"); return; }
@@ -238,7 +238,7 @@
     const info = h("div", { id: "douyin-current-info" });
     if (currentInfo) {
       const chips = [];
-      const SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", web: "网页" };
+      const SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", web: "网页" };
       if (currentInfo.site) chips.push(h("span", { class: "chip" }, SITE[currentInfo.site] || "网页"));
       if (currentInfo.durationSec) chips.push(h("span", { class: "chip" }, Math.round(currentInfo.durationSec) + " 秒"));
       if (currentInfo.music) chips.push(h("span", { class: "chip", title: "背景音乐：" + currentInfo.music }, "♪ " + currentInfo.music.slice(0, 40)));
@@ -501,8 +501,29 @@
         window.Shell.toast("手动分析需要先粘贴视频链接或文案", "error");
         return;
       }
-      videoInfo = { url: link, author: "", caption, likeCountText: "", commentCountText: "", shareCountText: "" };
-      currentInfo = videoInfo;
+      // 0.6.25：只贴了链接、没贴文案时，AI 什么都看不到，只会瞎编。改为在左边打开这个链接，读到信息并截画面后再分析。
+      if (link && !caption && /^https?:\/\//i.test(link)) {
+        setProgress(root, "正在左边打开链接并读取视频信息…");
+        try {
+          await api.video.embed.nav("douyin", "newTab", link);
+          let info = null;
+          for (let k = 0; k < 10 && !info; k++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            const r = await api.video.douyin.extract().catch(() => null);
+            if (r && r.ok && r.info && (r.info.caption || r.info.title || r.info.transcript || r.info.author)) info = r.info;
+          }
+          if (!info) throw new Error("页面没加载出来或需要登录：等左边视频播放后点“分析当前视频”，或把文案贴进下面再手动分析");
+          currentInfo = info; videoInfo = info; mode = "extract";
+          window.Shell.toast("已读到视频信息，开始分析…", "success");
+        } catch (e) {
+          setProgress(root, "没读到视频信息：" + ((e && e.message) || e), "warn");
+          window.Shell.toast((e && e.message) || "打开失败", "error");
+          return;
+        }
+      } else {
+        videoInfo = { url: link, author: "", caption, likeCountText: "", commentCountText: "", shareCountText: "" };
+        currentInfo = videoInfo;
+      }
     }
     busy = true;
     refreshAiStatus(root).catch(() => {});
