@@ -18,6 +18,7 @@ const { createLogger } = require("./lib/logger");
 const { createTaskManager } = require("./lib/tasks");
 const { setupShellIpc } = require("./lib/shell-ipc");
 const { createVideoStore } = require("./lib/video-store");
+const publish = require("./lib/video/publish");
 const { setupVideoIpc } = require("./lib/video-ipc");
 const { createSecretsStore } = require("./lib/video/secrets");
 const { ensureBinPath } = require("./lib/video/bin-path");
@@ -257,6 +258,27 @@ function browserUserAgent() {
     : process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
   return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`;
 }
+// 0.6.21：Google 会拦“内嵌浏览器”（此浏览器或应用可能不安全）。访问 accounts.google.com 时
+// 请求头和页面里的 UA 都换成 Firefox，并去掉 Sec-CH-UA 头；离开后换回 Chrome UA。
+function hookGoogleHeaders(sess) {
+  if (!sess || sess.__googleUaHooked) return;
+  sess.__googleUaHooked = true;
+  try {
+    sess.webRequest.onBeforeSendHeaders({ urls: ["https://accounts.google.com/*"] }, (details, cb) => {
+      cb({ requestHeaders: publish.rewriteGoogleHeaders(details.requestHeaders) });
+    });
+  } catch (err) { log.warn("Google 登录兼容设置失败：" + err.message); }
+}
+function hookAuthUa(wc) {
+  wc.on("did-start-navigation", (details, legacyUrl, _inPlace, legacyMain) => {
+    // Electron 新版：details.url / details.isMainFrame；旧版：(event, url, isInPlace, isMainFrame)
+    const u = (details && details.url) || legacyUrl;
+    const isMain = details && details.isMainFrame !== undefined ? details.isMainFrame : legacyMain !== false;
+    if (!isMain || !u) return;
+    const want = publish.GOOGLE_HOST_RE.test(u) ? publish.firefoxUserAgent() : browserUserAgent();
+    try { if (wc.getUserAgent() !== want) wc.setUserAgent(want); } catch { /* ignore */ }
+  });
+}
 // 0.6.15：记住每类内嵌浏览器打开的标签（网址+当前标签），下次启动打开时恢复
 const EMBED_TABS_FILE = path.join(DATA_DIR, "embed-tabs.json");
 const embedSaveTimers = new Map();
@@ -298,9 +320,22 @@ function createTabView(kind, partition) {
   });
   // 站内“新标签页打开”的链接：像浏览器一样开一个新标签
   view.webContents.setWindowOpenHandler(({ url: u }) => {
+    // 0.6.21：第三方登录（Google/Apple/Facebook…）用真正的弹窗打开，保留 window.opener，登录完原页面才能拿到结果
+    if (publish.isAuthPopupUrl(u)) {
+      return { action: "allow", overrideBrowserWindowOptions: {
+        width: 520, height: 720, autoHideMenuBar: true, title: "登录",
+        webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true },
+      } };
+    }
     if (/^https?:\/\//.test(u)) setImmediate(() => { try { addEmbedTab(kind, u); } catch { /* ignore */ } });
     return { action: "deny" };
   });
+  view.webContents.on("did-create-window", (child) => {
+    try { child.webContents.setUserAgent(browserUserAgent()); } catch { /* ignore */ }
+    hookAuthUa(child.webContents);
+  });
+  hookAuthUa(view.webContents);
+  hookGoogleHeaders(view.webContents.session);
   const push = () => pushEmbedState(kind);
   // 页面缩放：跨站跳转后 Chromium 会重置，按本类视图记住的比例重新套上
   view.webContents.on("did-navigate", () => {
@@ -458,6 +493,95 @@ function setupEmbedDownloads(kind, session) {
     });
   });
 }
+
+// 0.6.21：成片存草稿（TikTok / 抖音）——在视频分析的内嵌浏览器里开创作者上传页，
+// 等登录后自动把成片放进上传框（CDP DOM.setFileInputFiles），再填文案；最后由用户自己点“保存草稿”。
+const publishJobs = new Map(); // tabId -> { cancelled }
+async function runPublishDraft(wc, job, absFile, P, caption, status) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const alive = () => !job.cancelled && !wc.isDestroyed();
+  // 1) 等上传框出现（没登录时停在登录页，最多等 15 分钟）
+  let warned = false; const t0 = Date.now();
+  for (;;) {
+    if (!alive()) return status("cancelled", "已取消（标签被关闭）");
+    let probe = null;
+    try { probe = await wc.executeJavaScript(publish.fileInputProbeScript(), true); } catch { /* 页面跳转中 */ }
+    if (probe && probe.hasInput) break;
+    if (!warned && Date.now() - t0 > 6000) { warned = true; status("login", `请在左边浏览器里登录 ${P.name}（扫码或账号密码），登录后会自动继续`); }
+    if (Date.now() - t0 > 15 * 60000) return status("failed", "等了 15 分钟还没看到上传框，已停止。登录后可以在作品库再点一次“存草稿”");
+    await sleep(1500);
+  }
+  // 2) 放入成片
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) { dbg.attach("1.3"); attachedHere = true; }
+    const { root } = await dbg.sendCommand("DOM.getDocument", { depth: -1, pierce: true });
+    const { nodeIds } = await dbg.sendCommand("DOM.querySelectorAll", { nodeId: root.nodeId, selector: 'input[type="file"]' });
+    if (!nodeIds || !nodeIds.length) throw new Error("没找到上传框");
+    let target = nodeIds[0];
+    for (const id of nodeIds) {
+      const { attributes } = await dbg.sendCommand("DOM.getAttributes", { nodeId: id });
+      const i = attributes.indexOf("accept");
+      if (i >= 0 && /video|mp4|mov|\*/i.test(attributes[i + 1] || "")) { target = id; break; }
+    }
+    await dbg.sendCommand("DOM.setFileInputFiles", { nodeId: target, files: [absFile] });
+    status("uploading", `成片已放进 ${P.name} 上传框，正在上传…`);
+    // 3) 填文案（编辑器在上传开始后才出现，最多等 2 分钟）
+    if (caption) {
+      let focused = null; const t1 = Date.now();
+      while (alive() && Date.now() - t1 < 120000) {
+        try { focused = await wc.executeJavaScript(publish.focusCaptionScript(P.captionSelectors), true); } catch { focused = null; }
+        if (focused && focused.ok) break;
+        await sleep(1500);
+      }
+      if (focused && focused.ok) {
+        await sleep(800);
+        try { await wc.executeJavaScript(publish.focusCaptionScript([focused.selector]), true); } catch { /* ignore */ }
+        await dbg.sendCommand("Input.insertText", { text: caption });
+      } else status("uploading", "没找到文案输入框，文案请手动粘贴（已复制到剪贴板）");
+    }
+  } catch (err) {
+    return status("failed", "自动放入失败：" + ((err && err.message) || err) + "。可以在页面里手动选择文件（已打开成片所在文件夹）");
+  } finally {
+    if (attachedHere) { try { dbg.detach(); } catch { /* ignore */ } }
+  }
+  status("ready", `已放好成片${caption ? "和文案" : ""}。等上传完成后，检查一下再点${P.draftHint}`);
+}
+
+ipcMain.handle("video:publish.draft", async (_e, renderId, opts = {}) => {
+  try {
+    const rec = videoStore.renders.get(renderId);
+    if (!rec || !rec.outputPath) return { ok: false, error: "这条成片还没合成好" };
+    const absFile = path.join(videoDir, rec.outputPath);
+    if (!fs.existsSync(absFile)) return { ok: false, error: "成片文件已不在磁盘上" };
+    const pid = publish.platformOf(opts.platform);
+    const P = publish.PLATFORMS[pid];
+    const caption = publish.trimCaption(opts.caption, pid);
+    const st0 = embeddedViews.get("douyin");
+    if (!st0 || !st0.loaded) { try { await openEmbeddedView("douyin", "persist:douyin", DOUYIN_EMBED_URL); } catch (err) { log.warn("打开视频浏览器：" + err.message); } }
+    const tabId = addEmbedTab("douyin", P.uploadUrl);
+    const st = embeddedViews.get("douyin");
+    const tab = st && st.tabs.find((t) => t.id === tabId);
+    if (!tab) return { ok: false, error: "打开上传页失败" };
+    const wc = tab.view.webContents;
+    const job = { cancelled: false };
+    publishJobs.set(tabId, job);
+    wc.once("destroyed", () => { job.cancelled = true; });
+    const vlog = logger.scope("video");
+    const status = (stage, message) => {
+      (stage === "failed" ? vlog.warn : vlog.info).call(vlog, `存草稿（${P.name}）：${message}`);
+      broadcast("video:publish.status", { renderId, platform: pid, stage, message });
+      if (stage === "failed" || stage === "ready" || stage === "cancelled") publishJobs.delete(tabId);
+      if (stage === "failed") { try { shell.showItemInFolder(absFile); } catch { /* ignore */ } }
+    };
+    status("opening", `正在打开 ${P.name} 上传页…`);
+    runPublishDraft(wc, job, absFile, P, caption, status).catch((err) => status("failed", (err && err.message) || String(err)));
+    return { ok: true, tabId, platform: pid };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || String(err) };
+  }
+});
 
 ipcMain.handle("video:embed.nav", async (_e, kind, action, arg) => {
   if (!EMBED_CONFIG[kind]) return { ok: false, error: "未知视图" };

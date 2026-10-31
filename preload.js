@@ -131,6 +131,10 @@ contextBridge.exposeInMainWorld("app", {
       models: (kind) => ipcRenderer.invoke("video:ai.models", kind),
       voices: (kind) => ipcRenderer.invoke("video:tts.voices", kind),
     },
+    publish: {
+      draft: (renderId, opts) => ipcRenderer.invoke("video:publish.draft", renderId, opts),
+      onStatus: on("video:publish.status"),
+    },
     library: {
       renders: () => ipcRenderer.invoke("video:library.renders"),
       thumb: (renderId) => ipcRenderer.invoke("video:library.thumb", renderId),

@@ -129,6 +129,7 @@
         r.status === "done" && !r.exists ? h("div", { class: "muted small-text" }, "成片文件已不在磁盘上") : null,
         h("div", { class: "lib-actions" },
           playable ? h("button", { class: "btn small primary", onclick: () => openOutput(r.id) }, "播放") : null,
+          playable ? h("button", { class: "btn small", title: "放进 TikTok / 抖音的草稿箱", onclick: () => draftDialog(r) }, "存草稿") : null,
           r.exists ? h("button", { class: "btn small", onclick: () => call(api.video.renders.openFolder(r.id)) }, "文件夹") : null,
           r.projectExists ? h("button", { class: "btn small", onclick: () => { window.VideoApp.openProject(r.projectId); window.Shell.navigate("render"); } }, "去合成") : null,
           r.status === "failed" && r.projectExists ? h("button", { class: "btn small", onclick: async () => { if (await call(api.video.renders.retry(r.id))) { window.Shell.toast("已重新开始合成"); load(root); } } }, "重跑") : null,
@@ -191,6 +192,47 @@
             if (await call(api.video.analyses.remove(a.id))) { window.Shell.toast("已删除"); load(root); }
           } }, "删除"))));
   }
+
+  // 0.6.21 存草稿：选平台 + 文案 → 在“视频分析”的内嵌浏览器里打开创作者上传页，自动放好成片和文案
+  const PLATFORMS = [["tiktok", "TikTok"], ["douyin", "抖音"]];
+  function draftDialog(r) {
+    let platform = localStorage.getItem("publish.platform") || "tiktok";
+    const caption = h("textarea", { class: "input", rows: 4, maxlength: 2200, placeholder: "标题 / 文案 / #话题（可空）", value: r.projectTitle && r.projectTitle !== "未命名项目" ? r.projectTitle : "" });
+    const seg = h("div", { class: "segmented" });
+    const drawSeg = () => seg.replaceChildren(...PLATFORMS.map(([id, label]) => h("button", { class: platform === id ? "active" : "", onclick: () => { platform = id; drawSeg(); } }, label)));
+    drawSeg();
+    const finish = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (e) => { if (e.key === "Escape") finish(); };
+    const go = async () => {
+      localStorage.setItem("publish.platform", platform);
+      const text = caption.value.trim();
+      if (text) { try { await navigator.clipboard.writeText(text); } catch { /* ignore */ } }
+      finish();
+      window.Shell.navigate("douyin");
+      await new Promise((res) => setTimeout(res, 400));
+      const res = await api.video.publish.draft(r.id, { platform, caption: text });
+      if (!res || !res.ok) window.Shell.toast((res && res.error) || "打开上传页失败", "error");
+    };
+    const field = (label, el, hint) => h("label", { class: "form-field" }, h("span", { class: "form-label" }, label), el, hint ? h("span", { class: "form-hint" }, hint) : "");
+    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) finish(); } },
+      h("div", { class: "modal modal-form", role: "dialog", "aria-modal": "true" },
+        h("h3", { class: "modal-title" }, "存到草稿箱"),
+        h("div", { class: "form-field" }, h("span", { class: "form-label" }, "平台"), seg),
+        field("文案", caption, "会自动填进上传页（也会复制到剪贴板备用）"),
+        h("p", { class: "muted small-text" }, "会在“视频分析”左边的浏览器里打开创作者上传页。第一次需要登录（建议扫码或手机号/邮箱登录），登录后自动放入成片和文案，最后你检查一下点“保存草稿”。"),
+        h("div", { class: "actions end" }, h("button", { class: "btn", onclick: finish }, "取消"), h("button", { class: "btn primary", onclick: go }, "打开上传页"))));
+    document.body.append(overlay);
+    document.addEventListener("keydown", onKey);
+    caption.focus();
+  }
+  // 存草稿进度：在任何页面都弹提示
+  try {
+    api.video.publish.onStatus((p) => {
+      if (!p || !p.message) return;
+      const type = p.stage === "failed" ? "error" : p.stage === "ready" ? "success" : "";
+      window.Shell.toast(p.message, type);
+    });
+  } catch { /* ignore */ }
 
   async function openOutput(id) { await call(api.video.renders.openOutput(id)); }
   async function call(p) {
