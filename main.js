@@ -20,6 +20,11 @@ const { setupShellIpc } = require("./lib/shell-ipc");
 const { createVideoStore } = require("./lib/video-store");
 const { setupVideoIpc } = require("./lib/video-ipc");
 const { createSecretsStore } = require("./lib/video/secrets");
+const { ensureBinPath } = require("./lib/video/bin-path");
+
+// 从 Finder/Dock/开始菜单启动时 PATH 不含 Homebrew / winget 等目录，系统 ffmpeg 会“找不到”。
+// 在任何 ffmpeg/ffprobe 调用之前补全一次。
+try { ensureBinPath(); } catch { /* ignore */ }
 
 const config = loadConfig(__dirname);
 const TIMEOUT_MS = 25000; // 所有页面加载 / 网络请求的超时上限
@@ -238,6 +243,12 @@ function applyViewBounds(st) {
     });
   } catch (err) { log.error("内嵌视图定位失败：" + err.message); }
 }
+function browserUserAgent() {
+  const chrome = process.versions.chrome || "130.0.0.0";
+  const os = process.platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7"
+    : process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`;
+}
 function ensureEmbeddedView(kind, partition, url) {
   let st = embeddedViews.get(kind);
   if (st && !st.view.webContents.isDestroyed()) return st;
@@ -252,7 +263,11 @@ function ensureEmbeddedView(kind, partition, url) {
   // 还没收到页面上报的位置时先给一个占位尺寸，避免视图以 0 尺寸挂上去看不见；
   // 页面显示后会立刻按占位元素的位置重算。
   try { view.setBounds({ x: 260, y: 60, width: 640, height: 560 }); } catch { /* ignore */ }
-  st = { view, bounds: null, loaded: false, visible: false, url };
+  // 用不带 Electron/应用名标识的标准 Chrome UA，避免抖音/即梦识别成“非浏览器环境”而拦截或要求用浏览器打开
+  try { view.webContents.setUserAgent(browserUserAgent()); } catch { /* ignore */ }
+  // pageActive：对应页面当前是否在前台。后台任务（如即梦生成）只在页面在前台时才把视图显示出来，
+  // 避免用户切到别的页面后视图突然盖到别的页面上。
+  st = { view, bounds: null, loaded: false, visible: false, pageActive: false, url };
   embeddedViews.set(kind, st);
   return st;
 }
@@ -266,6 +281,7 @@ function showEmbeddedView(kind) {
 }
 function hideEmbeddedView(kind) {
   const st = embeddedViews.get(kind);
+  if (st) st.pageActive = false;
   if (!st || !st.visible) return;
   detachEmbeddedView(st.view);
   st.visible = false;
@@ -288,18 +304,47 @@ function embeddedSurface(kind, partition, url) {
   return {
     webContents: st.view.webContents,
     session: st.view.webContents.session,
-    show: () => showEmbeddedView(kind),
-    focus: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus(); },
+    show: () => (st.pageActive ? showEmbeddedView(kind) : false),
+    focus: () => { if (st.pageActive && mainWindow && !mainWindow.isDestroyed()) mainWindow.focus(); },
   };
 }
 async function openEmbeddedView(kind, partition, url) {
   const st = ensureEmbeddedView(kind, partition, url);
+  st.pageActive = true;
   showEmbeddedView(kind);
   if (!st.loaded) {
-    await st.view.webContents.loadURL(url);
+    // 抖音/即梦首页会做站内重定向，loadURL 因此常以 ERR_ABORTED(-3) reject，但页面其实已经在加载；
+    // 加载慢（超过 25 秒）也不算失败，视图里会继续加载。只有真正的网络错误才报给用户。
+    try {
+      await withTimeout(st.view.webContents.loadURL(url), TIMEOUT_MS, "页面加载");
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const benign = (err && (err.code === "ERR_ABORTED" || err.errno === -3)) || /ERR_ABORTED|\(-3\)|超时/.test(msg);
+      if (!benign) throw err;
+      log.warn(`内嵌视图 ${kind} 加载提示（已忽略）：${msg}`);
+    }
     st.loaded = true;
   }
   return { opened: true, url };
+}
+
+// 抓当前视图画面若干帧（JPEG data URL，宽度缩到 ≤540），给 AI 看画面用。视图没开或不可见时返回空数组。
+async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}) {
+  const st = embeddedViews.get(kind);
+  if (!st || !st.loaded || st.view.webContents.isDestroyed()) return [];
+  const out = [];
+  const n = Math.max(1, Math.min(4, Number(count) || 1));
+  for (let i = 0; i < n; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, Math.max(200, Math.min(5000, Number(intervalMs) || 1500))));
+    try {
+      let img = await withTimeout(st.view.webContents.capturePage(), 5000, "截图");
+      if (!img || img.isEmpty()) continue;
+      const size = img.getSize();
+      if (size.width > 540) img = img.resize({ width: 540 });
+      out.push("data:image/jpeg;base64," + img.toJPEG(70).toString("base64"));
+    } catch (err) { log.warn("截取画面失败：" + ((err && err.message) || err)); }
+  }
+  return out;
 }
 
 const JIMENG_EMBED_URL = "https://jimeng.jianying.com";
@@ -307,7 +352,7 @@ const DOUYIN_EMBED_URL = "https://www.douyin.com";
 const embeddedViewsApi = {
   jimeng: {
     open: () => openEmbeddedView("jimeng", "persist:jimeng", JIMENG_EMBED_URL),
-    show: () => showEmbeddedView("jimeng"),
+    show: () => { const st = embeddedViews.get("jimeng"); if (st) st.pageActive = true; return showEmbeddedView("jimeng"); },
     hide: () => hideEmbeddedView("jimeng"),
     setBounds: (rect) => setEmbeddedViewBounds("jimeng", rect),
     surface: () => embeddedSurface("jimeng", "persist:jimeng", JIMENG_EMBED_URL),
@@ -315,10 +360,11 @@ const embeddedViewsApi = {
   },
   douyin: {
     open: () => openEmbeddedView("douyin", "persist:douyin", DOUYIN_EMBED_URL),
-    show: () => showEmbeddedView("douyin"),
+    show: () => { const st = embeddedViews.get("douyin"); if (st) st.pageActive = true; return showEmbeddedView("douyin"); },
     hide: () => hideEmbeddedView("douyin"),
     setBounds: (rect) => setEmbeddedViewBounds("douyin", rect),
     surface: () => embeddedSurface("douyin", "persist:douyin", DOUYIN_EMBED_URL),
+    captureFrames: (opts) => captureEmbeddedFrames("douyin", opts),
     url: DOUYIN_EMBED_URL,
   },
 };
@@ -328,17 +374,29 @@ const embeddedViewsApi = {
 const videoDir = path.join(DATA_DIR, "data", "video");
 const videoStore = createVideoStore(videoDir);
 const ttsSecrets = createSecretsStore({ file: path.join(DATA_DIR, "secrets.json"), safeStorage });
-// TTS 网络请求走 net.fetch（走系统代理），包装成 tts.js 约定的 { ok, status, arrayBuffer, text }。
-const ttsFetch = async (url, opts) => {
-  const res = await net.fetch(url, opts);
-  return { ok: res.ok, status: res.status, arrayBuffer: async () => res.arrayBuffer(), text: async () => res.text() };
+// TTS / AI 网络请求走 net.fetch（走系统代理），包装成 tts.js 约定的 { ok, status, arrayBuffer, text }。
+// 整个请求（含读响应体）最多 3 分钟，服务卡住时不再让镜头永远停在“配音中”。
+const API_TIMEOUT_MS = 180000;
+const ttsFetch = async (url, opts = {}) => {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error("请求超时（3 分钟）")), API_TIMEOUT_MS);
+  let res;
+  try { res = await net.fetch(url, { ...opts, signal: ctl.signal }); }
+  catch (err) { clearTimeout(timer); throw ctl.signal.aborted ? new Error("请求超时（3 分钟），请检查网络或服务地址后重试") : err; }
+  const body = (fn) => async () => {
+    try { return await fn(); }
+    catch (err) { throw ctl.signal.aborted ? new Error("读取响应超时（3 分钟），请重试") : err; }
+    finally { clearTimeout(timer); }
+  };
+  if (!res.ok) clearTimeout(timer);
+  return { ok: res.ok, status: res.status, arrayBuffer: body(() => res.arrayBuffer()), text: body(() => res.text()) };
 };
 
 setupVideoIpc({
   ipcMain, store: videoStore, videoDir,
   embeddedViews: embeddedViewsApi,
   openPath: (p) => { try { shell.openPath(p); } catch { /* ignore */ } return true; },
-  videoDefaults: { defaultShotCount: settings.get("videoDefaultShotCount"), aspect: settings.get("videoAspect") },
+  videoDefaults: () => ({ defaultShotCount: settings.get("videoDefaultShotCount"), aspect: settings.get("videoAspect") }),
   getTtsSettings: () => ({
     ttsProvider: settings.get("ttsProvider"), ttsVoice: settings.get("ttsVoice"), ttsRate: settings.get("ttsRate"),
     ttsBaseUrl: settings.get("ttsBaseUrl"), ttsModel: settings.get("ttsModel"),

@@ -6,7 +6,6 @@
 (function () {
   const { h } = window.Shell;
   const api = window.app;
-  const debounce = window.Shell.debounce || ((fn) => fn);
 
   const STYLE_LABELS = {
     visual: "画面风格", camera: "镜头与运镜", pacing: "节奏",
@@ -15,6 +14,12 @@
   const STYLE_KEYS = Object.keys(STYLE_LABELS);
 
   let viewOpened = false;
+  // 抖音视图位置同步：滚动、日志面板开合、窗口缩放、对话框弹出时都跟着走（见 embed-sync.js）
+  const douyinSync = window.EmbedSync.attach({
+    pageId: "douyin", placeholderId: "douyin-view-placeholder",
+    api: { setBounds: (r) => api.video.douyin.setBounds(r), show: () => api.video.douyin.show(), hide: () => api.video.douyin.hide() },
+    isOpen: () => viewOpened,
+  });
   let aiReady = false;
   let currentInfo = null; // 提取到的视频信息（或 null）
   let draft = null; // 当前分析草稿（与存储记录同形），未分析时为 null
@@ -50,33 +55,15 @@
       refreshSavedList(root).catch(() => {});
     },
     async onShow(root) {
-      reportBounds(root);
-      if (viewOpened) { try { await api.video.douyin.show(); } catch { /* ignore */ } }
+      douyinSync.refresh();
       refreshAiStatus(root).catch(() => {});
       refreshSavedList(root).catch(() => {});
     },
     async onHide() {
+      douyinSync.hidden();
       try { await api.video.douyin.hide(); } catch { /* ignore */ }
     },
   });
-
-  // 上报占位元素位置给主进程（内嵌视图按这个 rect 定位），防抖；滚动/缩放时也上报。
-  function reportBounds(root) {
-    const el = root.querySelector("#douyin-view-placeholder");
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return;
-    api.video.douyin.setBounds({ x: r.x, y: r.y, width: r.width, height: r.height }).catch(() => {});
-  }
-  const reportBoundsDebounced = debounce((root) => reportBounds(root), 120);
-  window.addEventListener("resize", () => {
-    const root = document.getElementById("page-douyin");
-    if (root && !root.hidden) reportBoundsDebounced(root);
-  });
-  document.addEventListener("scroll", (e) => {
-    const root = document.getElementById("page-douyin");
-    if (root && !root.hidden && e.target && e.target.id === "main") reportBoundsDebounced(root);
-  }, true);
 
   function buildSkeleton(root) {
     const body = root._body;
@@ -91,11 +78,13 @@
         const r = await api.video.douyin.open();
         if (!r.ok) window.Shell.toast(r.error || "打开抖音失败", "error");
         else { viewOpened = true; window.Shell.toast("抖音已在左侧打开", "success"); }
-        reportBounds(root);
+        douyinSync.refresh();
       } catch (e) { window.Shell.toast(e.message, "error"); }
       finally { openBtn.disabled = false; }
     } }, "打开抖音");
     const hideBtn = h("button", { class: "btn", onclick: async () => {
+      viewOpened = false;
+      douyinSync.hidden();
       await api.video.douyin.hide().catch(() => {});
       window.Shell.toast("已隐藏抖音视图（登录态保留，再打开时不用重新登录）");
     } }, "隐藏视图");
@@ -115,7 +104,7 @@
     root._panel = panel;
     root._placeholder = placeholder;
     renderPanel(root);
-    requestAnimationFrame(() => reportBounds(root));
+    requestAnimationFrame(() => douyinSync.refresh());
   }
 
   async function refreshAiStatus(root) {
@@ -369,7 +358,8 @@
     busy = true;
     refreshAiStatus(root).catch(() => {});
     try {
-      const r = await api.video.douyin.analyze({ videoInfo, manualText: captionInput ? captionInput.value : "" });
+      // “分析当前视频”时顺带截几帧画面给 AI 看（视图开着时）；手动分析不截图
+      const r = await api.video.douyin.analyze({ videoInfo, manualText: captionInput ? captionInput.value : "", useFrames: mode === "extract" && viewOpened });
       if (!r.ok) throw new Error(r.error || "分析失败");
       const a = r.record;
       draft = {
@@ -380,7 +370,9 @@
         shots: (a.shots || []).map((s) => ({ ...s })), manualText: a.manualText || "",
       };
       renderPanel(root);
-      window.Shell.toast("分析完成，结果已保存，可编辑后导入到项目", "success");
+      window.Shell.toast(r.usedImages
+        ? "分析完成（已结合画面截图），结果已保存，可编辑后导入到项目"
+        : "分析完成（仅依据文案，未看画面），结果已保存，可编辑后导入到项目", "success");
     } catch (e) {
       window.Shell.toast((e && e.message) || "分析失败", "error");
     } finally {

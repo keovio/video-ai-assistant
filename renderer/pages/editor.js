@@ -95,6 +95,7 @@
     body.textContent = "";
     const p = draft.project;
     let selectedIdx = 0;
+    let savedSnap = ""; // 上次保存/加载时的草稿快照，用来判断有没有未保存改动
 
     const titleInput = h("input", { class: "input grow", value: p.title });
     const tagsInput = h("input", { class: "input grow", value: (p.tags || []).join("、"), placeholder: "标签，用、或逗号分隔" });
@@ -156,8 +157,8 @@
       const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入音频");
       const clearBtn = h("button", { class: "btn small danger-ghost", disabled: !s.audioAssetId,
         onclick: async () => {
-          if (!needSaved(s)) return;
-          const r = await api.video.shots.clearAudio(s.id);
+          const fresh = await ensureSaved(s); if (!fresh) return;
+          const r = await api.video.shots.clearAudio(fresh.id);
           if (r.ok) { window.Shell.toast("已清除该镜头配音"); await load(root, currentId); }
           else window.Shell.toast(r.error || "清除失败", "error");
         } }, "清除配音");
@@ -213,12 +214,24 @@
       renderDetail();
     };
     // ---- M2 配音操作：都需要已保存的镜头（未保存的新镜头没有服务端 id） ----
-    const needSaved = (s) => {
-      if (s._new || !s.id) { window.Shell.toast("请先点“保存”，再操作配音", "error"); return false; }
-      return true;
+    // 0.5.0：配音操作前若有未保存的改动（改了口播、增删/移动镜头、改标题），先自动保存再操作。
+    // 之前是直接用服务端的旧口播生成、操作完重载草稿，把没保存的改动整个吞掉。
+    const snapshot = () => JSON.stringify({
+      t: titleInput.value, g: tagsInput.value, a: aspectSelect.value, d: deletedIds.length,
+      s: draft.shots.map((x) => [x.id || "", !!x._new, x.narration || "", x.visual || "", x.imagePrompt || ""]),
+    });
+    const isDirty = () => snapshot() !== savedSnap;
+    const ensureSaved = async (s) => {
+      const idx = draft.shots.indexOf(s);
+      if (!isDirty() && !s._new && s.id) return s;
+      const saved = await save({ silent: true });
+      if (!saved) return null;
+      const fresh = idx >= 0 ? draft.shots[idx] : null;
+      if (!fresh || fresh._new || !fresh.id) { window.Shell.toast("自动保存后没找到这个镜头，请重新选择后再试", "error"); return null; }
+      return fresh;
     };
-    const generateShot = async (s, btn) => {
-      if (!needSaved(s)) return;
+    const generateShot = async (s0, btn) => {
+      const s = await ensureSaved(s0); if (!s) return;
       if (!String(s.narration || "").trim()) { window.Shell.toast("这镜没有口播文案，无法生成配音", "error"); return; }
       const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
       try {
@@ -230,8 +243,8 @@
       } catch (e) { window.Shell.toast(e.message, "error"); }
       finally { btn.disabled = false; btn.textContent = old; }
     };
-    const importShot = async (s, file) => {
-      if (!needSaved(s)) return;
+    const importShot = async (s0, file) => {
+      const s = await ensureSaved(s0); if (!s) return;
       try {
         const data = await file.arrayBuffer();
         const r = await api.video.shots.importAudio(s.id, { name: file.name, data });
@@ -254,7 +267,7 @@
       catch (e) { stopListen(); window.Shell.toast("音频播放失败：" + e.message, "error"); }
     };
     const generateAll = async (btn) => {
-      if (draft.shots.some((s) => s._new)) { window.Shell.toast("有未保存的新镜头，请先点“保存”", "error"); return; }
+      if (isDirty() || draft.shots.some((s) => s._new)) { if (!(await save({ silent: true }))) return; }
       const ids = draft.shots.filter((s) => String(s.narration || "").trim()).map((s) => s.id);
       if (!ids.length) { window.Shell.toast("没有可生成配音的口播文案", "error"); return; }
       const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
@@ -269,7 +282,7 @@
       } finally { btn.disabled = false; btn.textContent = old; }
     };
 
-    async function save() {
+    async function save({ silent = false } = {}) {
       const btn = body.querySelector("#btn-save");
       if (btn) btn.disabled = true;
       try {
@@ -289,20 +302,21 @@
         }
         await unwrap(await api.video.shots.reorder(currentId, finalIds));
         await load(root, currentId);
-        window.Shell.toast("已保存", "success");
-      } catch (e) { window.Shell.toast(e.message, "error"); }
+        if (!silent) window.Shell.toast("已保存", "success");
+        return true;
+      } catch (e) { window.Shell.toast((silent ? "自动保存失败：" : "") + e.message, "error"); return false; }
       finally { const b = body.querySelector("#btn-save"); if (b) b.disabled = false; }
     }
 
     body.append(
       h("header", { class: "page-head" },
         h("div", {}, h("h1", {}, "分镜编辑"),
-          h("p", { class: "sub" }, "改完点“保存”，离开页面前没保存的改动会丢。"))),
+          h("p", { class: "sub" }, "改完点“保存”，离开页面前没保存的改动会丢；生成/导入配音前会自动保存。"))),
       modules(card({ title: "项目", icon: "folder" },
         h("div", { class: "actions" }, titleInput, tagsInput, aspectSelect),
         h("p", { class: "muted" }, "", totalEl),
         h("div", { class: "actions" },
-          h("button", { class: "btn primary", id: "btn-save", onclick: save }, "保存"),
+          h("button", { class: "btn primary", id: "btn-save", onclick: () => save() }, "保存"),
           h("button", { class: "btn", onclick: async () => { await load(root, currentId); window.Shell.toast("已放弃未保存的改动"); } }, "放弃改动"),
           h("button", { class: "btn", id: "btn-voice-all", onclick: (e) => generateAll(e.currentTarget) }, "生成配音"),
           h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "去合成导出"),
@@ -318,6 +332,7 @@
             } }, "＋ 添加镜头"))),
         h("div", { class: "split-right" }, detailBox)));
 
+    savedSnap = snapshot();
     redrawList();
     renderDetail();
   }

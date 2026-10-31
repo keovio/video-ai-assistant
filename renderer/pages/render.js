@@ -7,9 +7,15 @@
   const { h, card, modules } = window.Shell;
   const api = window.app;
   const fmt = (s) => (Math.round(Number(s || 0) * 10) / 10) + " 秒";
-  const debounce = window.Shell.debounce || ((fn) => fn);
   let pollTimer = null;
   let currentId = null;
+  let jimengOpened = false;
+  // 即梦视图位置同步：滚动、日志面板开合、窗口缩放、对话框弹出时都跟着走（见 embed-sync.js）
+  const jimengSync = window.EmbedSync.attach({
+    pageId: "render", placeholderId: "jimeng-view-placeholder",
+    api: { setBounds: (r) => api.video.jimeng.setBounds(r), show: () => api.video.jimeng.show(), hide: () => api.video.jimeng.hide() },
+    isOpen: () => jimengOpened,
+  });
 
   async function unwrap(r) {
     if (!r || !r.ok) throw new Error((r && r.error) || "操作失败");
@@ -31,29 +37,16 @@
     async onShow(root) {
       currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
       if (root._body) load(root).catch((e) => window.Shell.toast(e.message, "error"));
-      reportBounds(root);
+      jimengSync.refresh();
     },
     async onHide() {
       stopPoll();
+      jimengSync.hidden();
       try { await api.video.jimeng.hide(); } catch { /* ignore */ }
     },
   });
 
   function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
-
-  // 上报即梦占位元素位置给主进程（内嵌视图按这个 rect 定位），防抖。
-  function reportBounds(root) {
-    const el = root.querySelector("#jimeng-view-placeholder");
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return;
-    api.video.jimeng.setBounds({ x: r.x, y: r.y, width: r.width, height: r.height }).catch(() => {});
-  }
-  const reportBoundsDebounced = debounce((root) => reportBounds(root), 120);
-  window.addEventListener("resize", () => {
-    const root = document.getElementById("page-render");
-    if (root && !root.hidden) reportBoundsDebounced(root);
-  });
 
   async function load(root) {
     stopPoll();
@@ -84,8 +77,8 @@
       try {
         const r = await api.video.jimeng.open();
         if (!r.ok) window.Shell.toast(r.error || "打开即梦失败", "error");
-        else window.Shell.toast("即梦已在左侧打开（登录一次后保持登录）", "success");
-        reportBounds(root);
+        else { jimengOpened = true; window.Shell.toast("即梦已在左侧打开（登录一次后保持登录）", "success"); }
+        jimengSync.refresh();
       } catch (e) { window.Shell.toast(e.message, "error"); }
       finally { jimengBtn.disabled = false; }
     } }, "打开即梦");
@@ -183,7 +176,7 @@
         h("div", { class: "split-left" }, modules(jimengCard), modules(shotsCard)),
         h("div", { class: "split-right" }, modules(controlsCard), latestCard ? modules(latestCard) : h("p", { class: "muted" }, "暂无合成记录"))));
 
-    requestAnimationFrame(() => reportBounds(root));
+    requestAnimationFrame(() => jimengSync.refresh());
 
     if (running) {
       stopPoll();
