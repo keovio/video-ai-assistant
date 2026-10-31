@@ -16,8 +16,11 @@
   // h("div", { class: "x", onclick: fn, hidden: true }, "文字", childNode, [更多子节点])
   function h(tag, attrs, ...children) {
     const el = document.createElement(tag);
+    let value;
     for (const [k, v] of Object.entries(attrs || {})) {
       if (v === undefined || v === null || v === false) continue;
+      // value 要设成属性（property）：<textarea> 不认 value 特性，<select> 要等选项加进来后再设
+      if (k === "value") { value = v; continue; }
       if (k === "class") el.className = v;
       else if (k === "dataset") Object.assign(el.dataset, v);
       else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
@@ -32,6 +35,10 @@
       else el.append(c instanceof Node ? c : document.createTextNode(String(c)));
     };
     children.forEach(add);
+    if (value !== undefined) {
+      if (tag === "input" || tag === "textarea" || tag === "select") el.value = String(value);
+      else el.setAttribute("value", String(value));
+    }
     return el;
   }
   const $ = (sel, root = document) => root.querySelector(sel);
