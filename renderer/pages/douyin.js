@@ -168,7 +168,7 @@
     const curId = draft && draft.id;
     for (const a of list.slice(0, savedView.limit)) {
       const title = a.scriptTitle || a.sourceTitle || "未命名分析";
-      const meta = [a.site && SAVED_SITE[a.site], a.author || "未知作者", shortWhen(a.createdAt)].filter(Boolean).join(" · ");
+      const meta = [a.site && SAVED_SITE[a.site], a.author || "未知作者", a.skillPath ? "skill ✓" : "", shortWhen(a.createdAt)].filter(Boolean).join(" · ");
       box.append(h("div", { class: "saved-item" + (a.id === curId ? " current" : ""), title: a.sourceUrl || "", onclick: () => loadSaved(root, a.id) },
         h("div", { class: "saved-item-text" },
           h("div", { class: "saved-item-title" }, title),
@@ -218,7 +218,7 @@
       draft = {
         id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption, musicName: a.musicName || "",
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText,
-        style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText,
+        style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText, skillPath: a.skillPath || "",
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,
         shots: (a.shots || []).map((s) => ({ ...s })), manualText: a.manualText || "",
       };
@@ -349,10 +349,25 @@
       try {
         const saved = await saveDraft(root, d, { silent: true });
         const r = await api.video.analyses.saveSkill(saved.id);
-        if (!r.ok) window.Shell.toast(r.error || "保存 skill 文件失败", "error");
-        else window.Shell.toast("skill 已保存到数据目录：" + r.path, "success");
+        if (!r.ok) { window.Shell.toast(r.error || "保存 skill 文件失败", "error"); return; }
+        d.skillPath = r.path; if (draft) draft.skillPath = r.path;
+        paintSkillState();
+        refreshSavedList(root).catch(() => {});
+        window.Shell.toast("skill 已保存，作品库“风格 skill”里能看到", "success");
       } catch (e) { window.Shell.toast(e.message, "error"); }
     } }, "保存 skill 文件");
+    const skillState = h("p", { class: "small-text skill-state" });
+    const paintSkillState = () => {
+      skillState.replaceChildren();
+      saveSkillBtn.textContent = d.skillPath ? "更新 skill 文件" : "保存 skill 文件";
+      if (!d.skillPath) { skillState.className = "small-text skill-state muted"; skillState.append("还没保存成 skill 文件"); return; }
+      skillState.className = "small-text skill-state ok";
+      skillState.append("✓ 已保存为 skill（" + (d.skill.name || "未命名") + "）  ",
+        h("a", { href: "#", onclick: async (e) => { e.preventDefault(); const r = await api.video.analyses.openSkill(d.id); if (!r.ok) window.Shell.toast(r.error, "error"); } }, "打开文件夹"),
+        "  ",
+        h("a", { href: "#", onclick: (e) => { e.preventDefault(); if (window.Library) window.Library.showTab("skills"); window.Shell.navigate("library"); } }, "在作品库查看"));
+    };
+    paintSkillState();
     const importBtn = h("button", { class: "btn primary", onclick: async () => {
       try {
         const saved = await saveDraft(root, d, { silent: true });
@@ -394,7 +409,7 @@
         h("summary", {}, "风格 skill"),
         skillNameInput, skillDescInput, skillBodyInput,
         h("p", { class: "card-desc" }, "SKILL.md 文本（保存 skill 文件时写这个内容）"), skillTextArea,
-        h("div", { class: "actions" }, copyBtn, saveSkillBtn)));
+        h("div", { class: "actions" }, copyBtn, saveSkillBtn), skillState));
   }
 
   async function saveDraft(root, d, { silent = false } = {}) {
@@ -419,7 +434,7 @@
     draft = {
       ...d, id: r.analysis.id,
       shots: (r.analysis.shots || []).map((s) => ({ ...s })),
-      skillText: r.analysis.skillText, skill: { ...r.analysis.skill }, style: { ...r.analysis.style },
+      skillText: r.analysis.skillText, skill: { ...r.analysis.skill }, style: { ...r.analysis.style }, skillPath: r.analysis.skillPath || "",
     };
     if (!silent) window.Shell.toast("分析已保存", "success");
     refreshSavedList(root).catch(() => {});
@@ -502,7 +517,7 @@
       draft = {
         id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption, musicName: a.musicName || "",
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText,
-        style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText,
+        style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText, skillPath: a.skillPath || "",
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,
         shots: (a.shots || []).map((s) => ({ ...s })), manualText: a.manualText || "",
       };

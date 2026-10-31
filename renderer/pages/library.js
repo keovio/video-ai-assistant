@@ -8,7 +8,10 @@
   const PREVIEW = 8; // “全部”视图每类先显示几条
   const PAGE = 24;
 
-  const state = { tab: "all", q: "", renders: [], analyses: [], limit: { renders: PAGE, analyses: PAGE }, loading: false, error: "" };
+  const state = { tab: "all", q: "", renders: [], analyses: [], limit: { renders: PAGE, analyses: PAGE, skills: PAGE }, loading: false, error: "",
+    sort: localStorage.getItem("library.sort") || "new", range: localStorage.getItem("library.range") || "all" };
+  // 0.6.23：其他页面跳过来时指定分类（例如分析页“在作品库查看” skill）
+  window.Library = { showTab(tab) { if (["all", "renders", "analyses", "skills"].includes(tab)) { state.tab = tab; state.q = ""; } } };
   const thumbs = new Map(); // renderId -> { thumb, seconds }
   let observer = null;
 
@@ -22,6 +25,39 @@
     const y = new Date(now); y.setDate(now.getDate() - 1);
     if (d.toDateString() === y.toDateString()) return "昨天 " + hm;
     return (d.getFullYear() === now.getFullYear() ? "" : d.getFullYear() + "/") + (d.getMonth() + 1) + "/" + d.getDate() + " " + hm;
+  }
+  // 0.6.23：风格 skill 用在“复制画面”上：按项目记住选的 skill，复制时把风格要点接在提示词后面
+  window.StyleSkill = {
+    key: (pid) => "render.styleSkill." + pid,
+    get: (pid) => (pid ? localStorage.getItem("render.styleSkill." + pid) || "" : ""),
+    set: (pid, id) => { if (!pid) return; if (id) localStorage.setItem("render.styleSkill." + pid, id); else localStorage.removeItem("render.styleSkill." + pid); },
+    suffix(a) {
+      if (!a) return "";
+      const st = a.style || {}; const sk = a.skill || {};
+      const parts = [sk.description, st.visual && "画面：" + st.visual, st.camera && "镜头：" + st.camera, st.colorLight && "色彩光线：" + st.colorLight, st.mood && "氛围：" + st.mood]
+        .map((x) => String(x || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+      const text = parts.join("；");
+      return text.length > 600 ? text.slice(0, 600) + "…" : text;
+    },
+  };
+  // 0.6.23：按添加时间排序、按时间范围筛选、按天分组
+  const tsOf = (x) => { const t = new Date(x && x.createdAt).getTime(); return Number.isFinite(t) ? t : 0; };
+  const RANGES = [["all", "全部时间"], ["today", "今天"], ["7", "近 7 天"], ["30", "近 30 天"]];
+  function inRange(x) {
+    if (state.range === "all") return true;
+    const t = tsOf(x); const now = new Date();
+    if (state.range === "today") return new Date(t).toDateString() === now.toDateString();
+    return t >= now.getTime() - Number(state.range) * 86400000;
+  }
+  const byTime = (list) => list.filter(inRange).sort((a, b) => (state.sort === "old" ? tsOf(a) - tsOf(b) : tsOf(b) - tsOf(a)));
+  function dayLabel(t) {
+    if (!t) return "未知时间";
+    const d = new Date(t); const now = new Date();
+    if (d.toDateString() === now.toDateString()) return "今天";
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "昨天";
+    const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+    return (d.getFullYear() === now.getFullYear() ? "" : d.getFullYear() + " 年 ") + (d.getMonth() + 1) + " 月 " + d.getDate() + " 日 " + wk;
   }
   const has = (q, ...fields) => !q || fields.some((f) => String(f || "").toLowerCase().includes(q));
 
@@ -64,17 +100,22 @@
     const tabBtn = (id, label, n) => h("button", { class: state.tab === id ? "active" : "", onclick: () => { state.tab = id; draw(root); } },
       label + (n != null ? ` ${n}` : ""));
     const search = h("input", { class: "input lib-search", type: "search", placeholder: "搜索项目名、分析标题、作者、链接", value: state.q,
-      oninput: (e) => { state.q = e.target.value; state.limit = { renders: PAGE, analyses: PAGE }; drawResults(root); } });
+      oninput: (e) => { state.q = e.target.value; state.limit = { renders: PAGE, analyses: PAGE, skills: PAGE }; drawResults(root); } });
 
     body.textContent = "";
     body.append(
       h("header", { class: "page-head" },
-        h("div", {}, h("h1", {}, "作品库"), h("p", { class: "sub" }, "所有项目合成出的成片和保存过的视频分析，都在这里。")),
+        h("div", {}, h("h1", {}, "作品库"), h("p", { class: "sub" }, "所有项目合成出的成片、保存过的视频分析和风格 skill，都在这里。")),
         h("button", { class: "btn", onclick: () => load(root) }, "刷新")),
       h("div", { class: "lib-toolbar" },
         h("div", { class: "segmented" },
-          tabBtn("all", "全部"), tabBtn("renders", "成片", state.renders.length), tabBtn("analyses", "分析", state.analyses.length)),
-        search),
+          tabBtn("all", "全部"), tabBtn("renders", "成片", state.renders.length), tabBtn("analyses", "分析", state.analyses.length), tabBtn("skills", "风格 skill", state.analyses.filter((a) => a.skillPath).length)),
+        search,
+        h("select", { class: "input lib-select", title: "时间范围", value: state.range, onchange: (e) => { state.range = e.target.value; localStorage.setItem("library.range", state.range); drawResults(root); } },
+          ...RANGES.map(([v, l]) => h("option", { value: v }, l))),
+        h("select", { class: "input lib-select", title: "排序", value: state.sort, onchange: (e) => { state.sort = e.target.value; localStorage.setItem("library.sort", state.sort); drawResults(root); } },
+          h("option", { value: "new" }, "最新添加在前"),
+          h("option", { value: "old" }, "最早添加在前"))),
       root._results = h("div", { class: "lib-results" }));
     drawResults(root);
   }
@@ -85,21 +126,30 @@
     body.textContent = "";
     if (observer) observer.disconnect();
     const q = state.q.trim().toLowerCase();
-    const renders = state.renders.filter((r) => has(q, r.projectTitle, r.outputPath, r.error));
-    const analyses = state.analyses.filter((a) => has(q, a.scriptTitle, a.sourceTitle, a.author, a.sourceUrl, a.caption, a.musicName));
+    const renders = byTime(state.renders).filter((r) => has(q, r.projectTitle, r.outputPath, r.error));
+    const analyses = byTime(state.analyses).filter((a) => has(q, a.scriptTitle, a.sourceTitle, a.author, a.sourceUrl, a.caption, a.musicName));
     if (state.error) { body.append(h("p", { class: "error" }, state.error)); return; }
 
-    if (state.tab !== "analyses") body.append(section(root, "renders", "成片", renders, renderCard,
+    const skills = byTime(state.analyses).filter((a) => a.skillPath && has(q, a.skill && a.skill.name, a.skill && a.skill.description, a.scriptTitle, a.sourceTitle, a.author));
+    const show = (k) => state.tab === "all" || state.tab === k;
+    if (show("renders")) body.append(section(root, "renders", "成片", renders, renderCard,
       state.renders.length ? "没有匹配的成片。" : "还没有成片。在“合成导出”里合成一次，就会出现在这里。"));
-    if (state.tab !== "renders") body.append(section(root, "analyses", "视频分析", analyses, analysisCard,
+    if (show("analyses")) body.append(section(root, "analyses", "视频分析", analyses, analysisCard,
       state.analyses.length ? "没有匹配的分析。" : "还没有保存的分析。在“视频分析”里分析一条视频并保存。"));
+    if (show("skills")) body.append(section(root, "skills", "风格 skill", skills, skillCard,
+      state.analyses.some((a) => a.skillPath) ? "没有匹配的 skill。" : "还没有保存的 skill。在“视频分析”结果的“风格 skill”里点“保存 skill 文件”。"));
   }
 
   function section(root, kind, title, items, cardFn, emptyText) {
     const all = state.tab === "all";
     const max = all ? PREVIEW : state.limit[kind];
     const grid = h("div", { class: "lib-grid lib-grid-" + kind });
-    for (const it of items.slice(0, max)) grid.append(cardFn(root, it));
+    let lastDay = null;
+    for (const it of items.slice(0, max)) {
+      // 分类视图按添加日期分组
+      if (!all) { const lab = dayLabel(tsOf(it)); if (lab !== lastDay) { lastDay = lab; grid.append(h("div", { class: "lib-day" }, lab)); } }
+      grid.append(cardFn(root, it));
+    }
     const more = items.length > max
       ? (all
         ? h("button", { class: "btn small ghost", onclick: () => { state.tab = kind; draw(root); } }, `查看全部 ${items.length} 条 →`)
@@ -174,6 +224,7 @@
         h("div", { class: "lib-card-meta" },
           h("span", { class: "chip" }, SITE[a.site] || "网页"),
           shots ? h("span", { class: "chip" }, `${shots} 镜`) : null,
+          a.skillPath ? h("span", { class: "chip ok", title: "已保存为风格 skill" }, "skill") : null,
           Array.isArray(a.shots) ? h("span", { class: "chip" }, speech ? "有口播" : "无口播") : null),
         h("div", { class: "lib-card-title two-line", title }, title),
         h("div", { class: "lib-card-meta" }, [a.author || "未知作者", a.musicName ? "♪ " + a.musicName.slice(0, 30) : "", fmtWhen(a.createdAt)].filter(Boolean).join(" · ")),
@@ -191,6 +242,39 @@
             if (!await window.Shell.confirm(`确定删除这条分析“${title}”吗？`)) return;
             if (await call(api.video.analyses.remove(a.id))) { window.Shell.toast("已删除"); load(root); }
           } }, "删除"))));
+  }
+
+  // 0.6.23 风格 skill 卡片：名称、说明、来源视频；复制 / 打开文件夹 / 打开分析 / 删除 skill 文件
+  function skillCard(root, a) {
+    const sk = a.skill || {};
+    const name = sk.name || "未命名 skill";
+    const from = a.sourceTitle || a.scriptTitle || a.sourceUrl || "";
+    const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+    return h("div", { class: "lib-card lib-analysis lib-skill", onclick: () => window.VideoAnalysis && window.VideoAnalysis.open(a.id) },
+      h("div", { class: "lib-card-body" },
+        h("div", { class: "lib-card-meta" }, h("span", { class: "chip ok" }, "skill"), a.site ? h("span", { class: "chip" }, SITE[a.site] || "网页") : null),
+        h("div", { class: "lib-card-title", title: name }, name),
+        sk.description ? h("div", { class: "muted small-text two-line", title: sk.description }, sk.description) : null,
+        h("div", { class: "lib-card-meta" }, [from ? "来自：" + from.slice(0, 40) : "", fmtWhen(a.updatedAt || a.createdAt)].filter(Boolean).join(" · ")),
+        h("div", { class: "lib-actions" },
+          h("button", { class: "btn small primary", onclick: stop(async () => {
+            const text = a.skillText || "";
+            if (!text.trim()) { window.Shell.toast("skill 文本是空的", "error"); return; }
+            try { await navigator.clipboard.writeText(text); window.Shell.toast("skill 已复制", "success"); } catch (err) { window.Shell.toast("复制失败：" + err.message, "error"); }
+          }) }, "复制"),
+          h("button", { class: "btn small", onclick: stop(() => call(api.video.analyses.openSkill(a.id))) }, "文件夹"),
+          h("button", { class: "btn small", title: "合成导出里复制画面提示词时自动带上这个风格", onclick: stop(() => {
+            const pid = window.VideoApp && window.VideoApp.currentProjectId();
+            if (!pid) { window.Shell.toast("先在项目页打开一个项目", "error"); return; }
+            window.StyleSkill.set(pid, a.id);
+            window.Shell.toast(`已用于当前项目：复制画面时带上“${name}”风格`, "success");
+            window.Shell.navigate("render");
+          }) }, "用于当前项目"),
+          h("button", { class: "btn small", onclick: stop(() => window.VideoAnalysis && window.VideoAnalysis.open(a.id)) }, "编辑"),
+          h("button", { class: "btn small danger-ghost", onclick: stop(async () => {
+            if (!await window.Shell.confirm(`删除 skill 文件“${name}”吗？分析记录会保留。`)) return;
+            if (await call(api.video.analyses.removeSkill(a.id))) { window.Shell.toast("已删除 skill 文件"); load(root); }
+          }) }, "删除"))));
   }
 
   // 0.6.21 存草稿：选平台 + 文案 → 在“视频分析”的内嵌浏览器里打开创作者上传页，自动放好成片和文案

@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld("app", {
       upsert: (input) => ipcRenderer.invoke("video:analyses.upsert", input),
       remove: (id) => ipcRenderer.invoke("video:analyses.remove", id),
       saveSkill: (id) => ipcRenderer.invoke("video:analyses.saveSkill", id),
+      openSkill: (id) => ipcRenderer.invoke("video:analyses.openSkill", id),
+      removeSkill: (id) => ipcRenderer.invoke("video:analyses.removeSkill", id),
       import: (id) => ipcRenderer.invoke("video:analyses.import", id),
     },
     tts: { providers: () => ipcRenderer.invoke("video:tts.providers") },

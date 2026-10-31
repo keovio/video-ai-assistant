@@ -183,7 +183,15 @@
 
     // ---- 每镜素材 ----
     // 画面提示词：生视频提示词，没有就用画面描述（复制去可灵/海螺/Vidu 等网站用）
-    const promptOf = (s) => String(s.imagePrompt || s.visual || "").trim();
+    const basePrompt = (s) => String(s.imagePrompt || s.visual || "").trim();
+    // 0.6.23：选了风格 skill 时，复制的提示词后面接上风格要点
+    const skillList = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath);
+    const SS = window.StyleSkill;
+    let skillId = SS ? SS.get(currentId) : "";
+    if (skillId && !skillList.some((a) => a.id === skillId)) { skillId = ""; SS.set(currentId, ""); }
+    const curSkill = () => skillList.find((a) => a.id === skillId) || null;
+    const styleText = () => (SS && curSkill() ? SS.suffix(curSkill()) : "");
+    const promptOf = (s) => { const p = basePrompt(s); const st = styleText(); return p && st ? `${p}\n风格：${st}` : p; };
     const copyText = async (text, okMsg) => {
       if (!text) { window.Shell.toast("没有可复制的画面提示词，先去分镜编辑里写画面描述", "error"); return; }
       try { await navigator.clipboard.writeText(text); window.Shell.toast(okMsg, "success"); }
@@ -208,7 +216,7 @@
           importInput.value = "";
         } });
       const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入");
-      const copyBtn = h("button", { class: "btn small", title: promptOf(s) || "这镜还没有画面提示词", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制`) }, "复制画面");
+      const copyBtn = h("button", { class: "btn small", title: promptOf(s) || "这镜还没有画面提示词", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制${styleText() ? "（带风格）" : ""}`) }, "复制画面");
       const clearBtn = s.videoAssetId ? h("button", { class: "btn small ghost", onclick: async () => {
         const r = await api.video.shots.clearVideo(s.id);
         if (r.ok) await load(root);
@@ -223,15 +231,23 @@
           h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`),
           copyBtn, importBtn, clearBtn, importInput),
         promptOf(s)
-          ? h("div", { class: "shot-prompt", title: "点一下复制", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制`) }, promptOf(s))
+          ? h("div", { class: "shot-prompt", title: styleText() ? "点一下复制（会带上风格）" : "点一下复制", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制${styleText() ? "（带风格）" : ""}`) }, basePrompt(s))
           : h("div", { class: "shot-prompt empty" }, "还没有画面提示词，去分镜编辑里写画面描述")));
     });
     const shotsCard = h("section", { class: "side-card" },
       h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`),
         shots.length ? h("button", { class: "btn small", title: "按“第 N 镜：提示词”一行一镜复制全部", onclick: () => {
-          const lines = shots.map((x, k) => promptOf(x) ? `第 ${k + 1} 镜（${fmt(x.end - x.start)}）：${promptOf(x)}` : "").filter(Boolean);
-          copyText(lines.join("\n\n"), `已复制 ${lines.length} 镜画面提示词`);
+          const lines = shots.map((x, k) => basePrompt(x) ? `第 ${k + 1} 镜（${fmt(x.end - x.start)}）：${basePrompt(x)}` : "").filter(Boolean);
+          const st = styleText();
+          copyText((st ? `整体风格：${st}\n\n` : "") + lines.join("\n\n"), `已复制 ${lines.length} 镜画面提示词${st ? "（带风格）" : ""}`);
         } }, "全部复制") : ""),
+      skillList.length ? h("label", { class: "row style-skill-row" }, h("span", { class: "small-text" }, "风格 skill"),
+        (() => {
+          const sel = h("select", { class: "input small grow", title: "复制画面提示词时自动带上所选风格", onchange: (e) => { SS.set(currentId, e.target.value); load(root).catch(() => {}); } },
+            h("option", { value: "" }, "不带风格"), ...skillList.map((a) => h("option", { value: a.id }, (a.skill && a.skill.name) || a.sourceTitle || "未命名 skill")));
+          sel.value = skillId;
+          return sel;
+        })()) : h("p", { class: "muted small-text" }, "在“视频分析”里保存风格 skill 后，可在这里选一个，复制画面时自动带上风格。"),
       h("p", { class: "muted small-text" }, "复制每镜的画面提示词，到左边任意生成网站（即梦、可灵、海螺、Vidu…）自己生成并下载，视频会出现在“浏览器下载”里，挂到对应镜头；也可以“导入”本机文件。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 

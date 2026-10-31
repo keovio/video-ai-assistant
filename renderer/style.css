@@ -679,7 +679,7 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .lib-section-head h2 { font-size: 16px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 6px; }
 .lib-grid { display: grid; gap: 14px; margin-bottom: 10px; }
 .lib-grid-renders { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
-.lib-grid-analyses { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.lib-grid-analyses, .lib-grid-skills { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .lib-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
 .lib-analysis { cursor: pointer; transition: border-color .12s; }
 .lib-analysis:hover { border-color: var(--primary); }
@@ -697,3 +697,9 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .lib-card-meta { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; overflow: hidden; }
 .lib-err { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
+
+/* 0.6.23 作品库：时间筛选/排序 + 按天分组 */
+.lib-select { width: auto; flex: 0 0 auto; }
+.lib-day { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--text-2, #666); margin: 8px 0 -2px; }
+.lib-day:first-child { margin-top: 0; }
+.style-skill-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
