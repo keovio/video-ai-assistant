@@ -181,6 +181,13 @@
     }
 
     // ---- 每镜素材 ----
+    // 画面提示词：生视频提示词，没有就用画面描述（复制去可灵/海螺/Vidu 等网站用）
+    const promptOf = (s) => String(s.imagePrompt || s.visual || "").trim();
+    const copyText = async (text, okMsg) => {
+      if (!text) { window.Shell.toast("没有可复制的画面提示词，先去分镜编辑里写画面描述", "error"); return; }
+      try { await navigator.clipboard.writeText(text); window.Shell.toast(okMsg, "success"); }
+      catch (e) { window.Shell.toast("复制失败：" + e.message, "error"); }
+    };
     const clipList = h("div", { class: "clip-list" });
     shots.forEach((s, i) => {
       const audioChip = s.audioAssetId ? h("span", { class: "chip ok" }, "配音 " + fmt(s.audioSeconds)) : h("span", { class: "chip warn" }, "无配音");
@@ -210,6 +217,7 @@
           importInput.value = "";
         } });
       const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入");
+      const copyBtn = h("button", { class: "btn small", title: promptOf(s) || "这镜还没有画面提示词", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制`) }, "复制画面");
       const clearBtn = s.videoAssetId ? h("button", { class: "btn small ghost", onclick: async () => {
         const r = await api.video.shots.clearVideo(s.id);
         if (r.ok) await load(root);
@@ -222,10 +230,14 @@
           audioChip, videoChip),
         h("div", { class: "clip-row-foot" },
           h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`),
-          genBtn, importBtn, clearBtn, importInput)));
+          copyBtn, genBtn, importBtn, clearBtn, importInput)));
     });
     const shotsCard = h("section", { class: "side-card" },
-      h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`)),
+      h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`),
+        shots.length ? h("button", { class: "btn small", title: "按“第 N 镜：提示词”一行一镜复制全部", onclick: () => {
+          const lines = shots.map((x, k) => promptOf(x) ? `第 ${k + 1} 镜（${fmt(x.end - x.start)}）：${promptOf(x)}` : "").filter(Boolean);
+          copyText(lines.join("\n\n"), `已复制 ${lines.length} 镜画面提示词`);
+        } }, "全部复制") : ""),
       h("p", { class: "muted small-text" }, "“即梦生成”会在左边即梦里自动生成并下载；用其他网站（可灵、海螺、Vidu…）就在左边生成后点下载，视频会出现在“浏览器下载”里。也可以“导入”本机文件。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 
