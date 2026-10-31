@@ -142,7 +142,7 @@ test("分镜转导入镜头：只含白名单字段，顺序不变", () => {
 });
 
 // ---- 存储白名单 + IPC ----
-test("分析记录白名单：未知字段被 strip，分镜只留白名单字段、超 12 镜截断、空口播过滤", () => {
+test("分析记录白名单：未知字段被 strip，分镜只留白名单字段、超 30 镜截断、空口播过滤", () => {
   const store = createVideoStore(path.join(tmp(), "video"));
   const rec = store.analyses.upsert({
     sourceUrl: "https://www.douyin.com/video/1", author: "阿山", hacked: 1,
@@ -150,11 +150,11 @@ test("分析记录白名单：未知字段被 strip，分镜只留白名单字�
     skill: { name: "s", description: "d", body: "b" },
     skillText: "---\nname: s\n---\n",
     scriptTitle: "T", scriptNarration: "N",
-    shots: Array.from({ length: 14 }, (_, i) => ({ narration: i === 0 ? "" : `口播${i}`, visual: "v", imagePrompt: "p", seconds: 2, hacked: 1 })),
+    shots: Array.from({ length: 32 }, (_, i) => ({ narration: i === 0 ? "" : `口播${i}`, visual: "v", imagePrompt: "p", seconds: 2, hacked: 1 })),
   });
   assert.equal(rec.hacked, undefined);
   assert.equal(rec.style.hackedStyle, undefined);
-  assert.equal(rec.shots.length, 12); // 第 0 镜空口播被过滤，剩下 13 镜再截到 12
+  assert.equal(rec.shots.length, 30); // 第 0 镜空口播被过滤，剩下 31 镜再截到 30
   assert.deepEqual(Object.keys(rec.shots[0]).sort(), ["imagePrompt", "narration", "seconds", "visual"]);
   assert.equal(rec.skillPath, "");
   const norm = normalizeAnalysis({ shots: [{ narration: "x", visual: "v", imagePrompt: "p", seconds: 99 }] });
