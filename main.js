@@ -625,7 +625,7 @@ function runSmokeTest() {
         videoM3Debug = { imp3: imp3.ok, started: started.ok, startedError: started.error || "", ffOk: ff3.ok, rec: rec ? { status: rec.status, outputPath: rec.outputPath, srtPath: rec.srtPath, error: rec.error, message: rec.message } : null, renderBtns };
         await a.video.projects.remove(pid3);
       } catch (e) { videoM3Ok = false; videoM3Debug = { exception: e.message }; }
-      // 视频 M4：抖音分析页能打开（无 AI Key 时分析按钮明确禁用并提示去设置），
+      // 视频 M4：抖音分析页能打开（无 AI Key 时提示条为警告色并提示去设置；0.6.3 起按钮可点，点了带去设置），
       // 项目页以卡片展示（新建项目后出现 .project-card），再删掉。
       let videoM4Ok = false;
       try {
@@ -633,7 +633,8 @@ function runSmokeTest() {
         for (let i = 0; i < 40 && !document.querySelector("#douyin-analyze-btn"); i++) await new Promise((r) => setTimeout(r, 50));
         const analyzeBtn = document.querySelector("#douyin-analyze-btn");
         const aiHint = document.querySelector("#douyin-ai-hint");
-        const douyinOk = !!analyzeBtn && analyzeBtn.disabled === true && !!aiHint
+        for (let i = 0; i < 40 && aiHint && !aiHint.classList.contains("warn"); i++) await new Promise((r) => setTimeout(r, 50));
+        const douyinOk = !!analyzeBtn && !!aiHint && aiHint.classList.contains("warn")
           && !!document.querySelector("#douyin-view-placeholder");
         const created4 = await a.video.projects.create({ title: "冒烟卡片" });
         window.Shell.navigate("projects");
