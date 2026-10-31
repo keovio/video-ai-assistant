@@ -45,17 +45,20 @@
         modules(newCard),
         listBox);
       root._listBox = listBox;
-      refresh(root).catch((e) => window.Shell.toast(e.message, "error"));
     },
   });
 
+  let refreshSeq = 0;
   async function refresh(root) {
     const box = root._listBox || root.querySelector("#project-list");
     if (!box) return;
-    box.textContent = "";
+    // 打开页面时 render 和 onShow 会同时刷新：只让最后一次落地，否则列表会重复显示
+    const seq = ++refreshSeq;
     let r;
     try { r = await unwrap(await api.video.projects.list()); }
-    catch (e) { box.append(h("p", { class: "error" }, e.message)); return; }
+    catch (e) { if (seq === refreshSeq) box.replaceChildren(h("p", { class: "error" }, e.message)); return; }
+    if (seq !== refreshSeq) return;
+    box.textContent = "";
     if (!r.projects.length) {
       box.append(h("p", { class: "muted" }, "还没有项目，先在上面新建一个。"));
       return;
@@ -73,8 +76,13 @@
             catch (e) { window.Shell.toast(e.message, "error"); }
           } }, "复制"),
           h("button", { class: "btn small danger-ghost", onclick: async () => {
-            if (!await window.Shell.confirm(`确定删除项目“${p.title}”吗？它的镜头和渲染记录会一起删除，资产文件保留。`)) return;
-            try { await unwrap(await api.video.projects.remove(p.id)); await refresh(root); }
+            if (!await window.Shell.confirm(`确定删除项目“${p.title}”吗？删除前会自动备份，误删可在“设置 → ffmpeg 与数据”里恢复。`)) return;
+            try {
+              const d = await unwrap(await api.video.projects.remove(p.id));
+              if (window.VideoApp.currentProjectId() === p.id) window.VideoApp.openProject(null);
+              window.Shell.toast(`已删除“${p.title}”，还剩 ${d.after} 个项目`);
+              await refresh(root);
+            }
             catch (e) { window.Shell.toast(e.message, "error"); }
           } }, "删除"))));
     }

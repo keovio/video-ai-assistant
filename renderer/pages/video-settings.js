@@ -87,7 +87,7 @@
 
     // ---------------- 系统依赖 ----------------
     window.Shell.registerSettingsSection({
-      id: "video-system", title: "ffmpeg", icon: "terminal", order: 4,
+      id: "video-system", title: "ffmpeg 与数据", icon: "terminal", order: 4,
       render(box) {
         const ffStatus = h("span", { class: "muted small-text" }, "正在检测…");
         const refreshFf = async (fresh) => {
@@ -97,9 +97,28 @@
             ffStatus.textContent = r.ok ? "ffmpeg 与 ffprobe 均可用" : r.warning;
           } catch (e) { ffStatus.textContent = "检测失败：" + e.message; }
         };
+        const backupBox = h("div", { class: "clip-list" });
+        const refreshBackups = async () => {
+          const r = await api.video.backups.list().catch(() => ({ backups: [] }));
+          const list = (r && r.backups) || [];
+          backupBox.replaceChildren(...(list.length ? list.slice(0, 10).map((b) => h("div", { class: "clip-row" },
+            h("div", { class: "clip-row-head" },
+              h("span", { class: "grow" }, b.reason || "备份"),
+              h("span", { class: "chip" }, `${b.projectCount} 个项目`),
+              h("button", { class: "btn small", onclick: async () => {
+                if (!(await window.Shell.confirm(`恢复到“${b.reason}”时的数据？之后新建或修改的内容会被替换（恢复前会先自动备份当前数据）。`))) return;
+                const res = await api.video.backups.restore(b.id);
+                if (!res.ok) { window.Shell.toast(res.error || "恢复失败", "error"); return; }
+                window.Shell.toast(`已恢复，共 ${res.projectCount} 个项目`, "success");
+                refreshBackups();
+              } }, "恢复")),
+            h("div", { class: "clip-row-text" }, new Date(b.at).toLocaleString()))) : [h("p", { class: "muted small-text" }, "还没有备份。删除项目前会自动备份。")]));
+        };
         box.append(row("系统 ffmpeg", ffStatus, h("button", { class: "btn", onclick: () => refreshFf(true) }, "重新检测")),
-          h("p", { class: "muted small-text" }, "配音实测时长和合成导出依赖系统 ffmpeg / ffprobe。macOS：brew install ffmpeg；Windows：winget install ffmpeg。装完点“重新检测”，不用重启。"));
+          h("p", { class: "muted small-text" }, "配音实测时长和合成导出依赖系统 ffmpeg / ffprobe。macOS：brew install ffmpeg；Windows：winget install ffmpeg。装完点“重新检测”，不用重启。"),
+          row("数据备份", "删除项目前自动备份，误删可以在这里恢复", backupBox, { stack: true }));
         refreshFf(false);
+        refreshBackups();
       },
     });
   }

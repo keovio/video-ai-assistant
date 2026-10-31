@@ -126,6 +126,10 @@ contextBridge.exposeInMainWorld("app", {
       import: (id) => ipcRenderer.invoke("video:analyses.import", id),
     },
     tts: { providers: () => ipcRenderer.invoke("video:tts.providers") },
+    backups: {
+      list: () => ipcRenderer.invoke("video:backups.list"),
+      restore: (id) => ipcRenderer.invoke("video:backups.restore", id),
+    },
     ffmpeg: { status: (opts) => ipcRenderer.invoke("video:ffmpeg.status", opts || {}) },
     secrets: {
       status: () => ipcRenderer.invoke("video:secrets.status"),

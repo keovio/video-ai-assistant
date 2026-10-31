@@ -41,7 +41,7 @@
     id: "douyin",
     title: "抖音分析",
     icon: "search",
-    order: 15,
+    order: 26,
     render(root) {
       root.classList.add("page-wide");
       root._body = h("div", { id: "douyin-body" });
