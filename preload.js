@@ -121,6 +121,7 @@ contextBridge.exposeInMainWorld("app", {
       setBounds: (rect) => ipcRenderer.invoke("video:douyin.setBounds", rect),
       extract: () => ipcRenderer.invoke("video:douyin.extract"),
       analyze: (input) => ipcRenderer.invoke("video:douyin.analyze", input),
+      cancelAnalyze: () => ipcRenderer.invoke("video:douyin.cancelAnalyze"),
     },
     ai: {
       status: () => ipcRenderer.invoke("video:ai.status"),

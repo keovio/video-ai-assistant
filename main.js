@@ -588,12 +588,21 @@ const makeFetch = (timeoutMs) => async (url, opts = {}) => {
   const mins = Math.round(timeoutMs / 60000);
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(new Error(`请求超时（${mins} 分钟）`)), timeoutMs);
+  // 0.6.10：外部取消（后台任务“取消”）也能中断请求
+  const ext = opts.signal;
+  let cancelled = false;
+  const cancelErr = () => { const e = new Error("已取消"); e.code = "TASK_CANCELLED"; e.name = "AbortError"; return e; };
+  if (ext) {
+    if (ext.aborted) { clearTimeout(timer); throw cancelErr(); }
+    ext.addEventListener("abort", () => { cancelled = true; ctl.abort(); }, { once: true });
+  }
+  const fetchOpts = { ...opts }; delete fetchOpts.signal;
   let res;
-  try { res = await net.fetch(url, { ...opts, signal: ctl.signal }); }
-  catch (err) { clearTimeout(timer); throw ctl.signal.aborted ? new Error(`请求超时（${mins} 分钟），请检查网络或服务地址后重试`) : err; }
+  try { res = await net.fetch(url, { ...fetchOpts, signal: ctl.signal }); }
+  catch (err) { clearTimeout(timer); if (cancelled) throw cancelErr(); throw ctl.signal.aborted ? new Error(`请求超时（${mins} 分钟），请检查网络或服务地址后重试`) : err; }
   const body = (fn) => async () => {
     try { return await fn(); }
-    catch (err) { throw ctl.signal.aborted ? new Error(`读取响应超时（${mins} 分钟），请重试`) : err; }
+    catch (err) { if (cancelled) throw cancelErr(); throw ctl.signal.aborted ? new Error(`读取响应超时（${mins} 分钟），请重试`) : err; }
     finally { clearTimeout(timer); }
   };
   if (!res.ok) clearTimeout(timer);
@@ -619,6 +628,7 @@ setupVideoIpc({
   getAiKey: () => ttsSecrets.get("aiApiKey"),
   fetchImpl: ttsFetch,
   aiFetchImpl: aiFetch,
+  tasks,
   logger,
   secrets: ttsSecrets,
 });

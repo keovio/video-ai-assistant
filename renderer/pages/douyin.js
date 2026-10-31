@@ -343,9 +343,15 @@
     box.className = "hint-bar " + (kind || "");
     if (kind) { box.textContent = stage; if (btn) btn.textContent = "分析当前视频"; return; }
     const t0 = Date.now();
+    const label = h("span", { class: "grow" });
+    const cancelBtn = h("button", { class: "btn small", onclick: async () => {
+      cancelBtn.disabled = true; cancelBtn.textContent = "取消中…";
+      try { await api.video.douyin.cancelAnalyze(); } catch { /* ignore */ }
+    } }, "取消");
+    box.replaceChildren(label, cancelBtn);
     const draw = () => {
       const sec = Math.floor((Date.now() - t0) / 1000);
-      box.textContent = `${stage}（已用 ${sec} 秒，详细过程看右侧运行日志）`;
+      label.textContent = `${stage}（已用 ${sec} 秒，也可在后台任务里查看）`;
       if (btn) btn.textContent = `分析中… ${sec}s`;
     };
     draw();
@@ -395,6 +401,7 @@
     try {
       // “分析当前视频”时顺带截几帧画面给 AI 看（视图开着时）；手动分析不截图
       const r = await api.video.douyin.analyze({ videoInfo, manualText: captionInput ? captionInput.value : "", useFrames: mode === "extract" && viewOpened() });
+      if (!r.ok && r.cancelled) { setProgress(root, "已取消分析", "warn"); window.Shell.toast("已取消分析"); return; }
       if (!r.ok) throw new Error(r.error || "分析失败");
       const a = r.record;
       draft = {
