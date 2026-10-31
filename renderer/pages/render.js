@@ -160,7 +160,8 @@
       const [label, cls] = STATUS[latest.status] || [latest.status, ""];
       const hasOut = !!latest.outputPath && latest.status === "done";
       latestCard = h("section", { class: "side-card" },
-        h("h3", {}, h("span", { class: "grow" }, "最近成片"), h("span", { class: "chip " + cls }, label)),
+        h("h3", {}, h("span", { class: "grow" }, "最近成片"), h("span", { class: "chip " + cls }, label),
+          h("button", { class: "btn small ghost", title: "所有项目的成片", onclick: () => window.Shell.navigate("library") }, "作品库")),
         latest.status === "failed" ? h("p", { class: "error small-text" }, latest.error || latest.message || "合成失败") : "",
         hasOut ? h("p", { class: "muted small-text" }, latest.outputPath.split("/").pop() + (latest.srtPath ? " · 附 SRT 字幕" : "")) : "",
         ...(latest.warnings || []).slice(0, 4).map((w) => h("p", { class: "muted small-text" }, "· " + w)),

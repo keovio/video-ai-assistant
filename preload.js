@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld("app", {
       retry: (renderId) => ipcRenderer.invoke("video:renders.retry", renderId),
       openFolder: (renderId) => ipcRenderer.invoke("video:renders.openFolder", renderId),
       openOutput: (renderId) => ipcRenderer.invoke("video:renders.openOutput", renderId),
+      remove: (renderId, opts) => ipcRenderer.invoke("video:renders.remove", renderId, opts),
     },
     // 内嵌浏览器工具栏：后退/前进/刷新/主页/地址栏/外部浏览器打开，以及导航状态推送
     embed: {
@@ -129,6 +130,10 @@ contextBridge.exposeInMainWorld("app", {
       // kind: "ai" | "tts" | "tts-local" | "tts-voicebox" → { ok, models: [id…] }
       models: (kind) => ipcRenderer.invoke("video:ai.models", kind),
       voices: (kind) => ipcRenderer.invoke("video:tts.voices", kind),
+    },
+    library: {
+      renders: () => ipcRenderer.invoke("video:library.renders"),
+      thumb: (renderId) => ipcRenderer.invoke("video:library.thumb", renderId),
     },
     analyses: {
       list: () => ipcRenderer.invoke("video:analyses.list"),

@@ -39,21 +39,33 @@
     return r;
   }
 
+  // 作品库等页面跳过来打开某条已保存的分析：VideoAnalysis.open(id)
+  let pageRoot = null, pendingOpen = "";
+  window.VideoAnalysis = {
+    open(id) {
+      if (pageRoot && pageRoot.isConnected) { pendingOpen = ""; window.Shell.navigate("douyin"); loadSaved(pageRoot, id); return; }
+      pendingOpen = id; window.Shell.navigate("douyin");
+    },
+  };
+
   window.Shell.registerPage({
     id: "douyin",
     title: "视频分析",
     icon: "search",
     order: 26,
     render(root) {
+      pageRoot = root;
       root.classList.add("page-wide");
       root._body = h("div", { id: "douyin-body" });
       root.append(root._body);
       buildSkeleton(root);
+      if (pendingOpen) { const id = pendingOpen; pendingOpen = ""; loadSaved(root, id); }
       refreshAiStatus(root).catch(() => {});
       refreshSavedList(root).catch(() => {});
     },
     async onShow(root) {
       if (browser) browser.show();
+      if (pendingOpen) { const id = pendingOpen; pendingOpen = ""; loadSaved(root, id); }
       refreshAiStatus(root).catch(() => {});
       refreshSavedList(root).catch(() => {});
     },
