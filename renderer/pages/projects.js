@@ -1,7 +1,7 @@
 "use strict";
 // 项目列表：新建、打开、复制、删除；显示标题、镜头数、预估总时长、状态。
 (function () {
-  const { h, card, modules } = window.Shell;
+  const { h } = window.Shell;
   const api = window.app;
 
   const STATUS_LABEL = { draft: "草稿", script_ready: "脚本就绪", rendering: "渲染中", done: "已完成", failed: "失败" };
@@ -19,30 +19,23 @@
     async onShow(root) { await refresh(root); },
     render(root, ctx) {
       root.classList.add("page-wide");
-      const titleInput = h("input", { class: "input grow", placeholder: "新项目标题（可空，默认“未命名项目”）", id: "new-project-title" });
-      const shotSelect = h("select", { class: "input" },
-        ...[3, 6, 9].map((n) => h("option", { value: String(n) }, `${n} 个镜头`)));
-      shotSelect.value = "6";
-      const aspectSelect = h("select", { class: "input" },
-        ...[["9:16", "9:16 竖屏"], ["16:9", "16:9 横屏"], ["1:1", "1:1 方形"]].map(([v, l]) => h("option", { value: v }, l)));
-      try { aspectSelect.value = (window.Shell.getSettings().videoAspect) || "9:16"; } catch { /* ignore */ }
       const listBox = h("div", { id: "project-list", class: "project-grid" });
-      const newCard = card({ title: "新建项目", icon: "note" },
-        h("div", { class: "actions" }, titleInput, shotSelect, aspectSelect,
-          h("button", { class: "btn primary", onclick: async () => {
-            try {
-              const r = await unwrap(await api.video.projects.create({
-                title: titleInput.value, shotCount: Number(shotSelect.value), aspect: aspectSelect.value,
-              }));
-              titleInput.value = "";
-              window.VideoApp.openProject(r.project.id);
-              window.Shell.navigate("editor");
-            } catch (e) { window.Shell.toast(e.message, "error"); }
-          } }, "新建并打开")));
+      // 新建只留右上角一个按钮：标题“未命名项目”、6 个镜头、画幅取设置里的默认值，进编辑器再改
+      const newBtn = h("button", { class: "btn primary", id: "new-project-btn", onclick: async () => {
+        newBtn.disabled = true;
+        try {
+          let aspect = "9:16";
+          try { aspect = (window.Shell.getSettings().videoAspect) || "9:16"; } catch { /* ignore */ }
+          const r = await unwrap(await api.video.projects.create({ title: "", shotCount: 6, aspect }));
+          window.VideoApp.openProject(r.project.id);
+          window.Shell.navigate("editor");
+        } catch (e) { window.Shell.toast(e.message, "error"); }
+        finally { newBtn.disabled = false; }
+      } }, "新建项目");
       root.append(
         h("header", { class: "page-head" },
-          h("div", {}, h("h1", {}, "视频项目"), h("p", { class: "sub" }, "一个项目就是一条口播视频：先写脚本和分镜，配音、画面、合成在 M2/M3 做。"))),
-        modules(newCard),
+          h("div", {}, h("h1", {}, "视频项目"), h("p", { class: "sub" }, "一个项目就是一条口播视频：脚本和分镜 → 配音 → 画面 → 合成导出。")),
+          newBtn),
         listBox);
       root._listBox = listBox;
     },
@@ -60,7 +53,7 @@
     if (seq !== refreshSeq) return;
     box.textContent = "";
     if (!r.projects.length) {
-      box.append(h("p", { class: "muted" }, "还没有项目，先在上面新建一个。"));
+      box.append(h("p", { class: "muted" }, "还没有项目，点右上角“新建项目”开始。"));
       return;
     }
     for (const p of r.projects) {
