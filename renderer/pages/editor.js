@@ -3,7 +3,7 @@
 // 左栏：紧凑的镜头列表（可滚动，点一行选中）；右栏：选中镜头的详情表单 + 项目保存栏。
 // 镜头顺序、增删、配音操作的语义与之前一致：未保存的新镜头要先点“保存”才能操作配音。
 (function () {
-  const { h, card, modules } = window.Shell;
+  const { h, icon } = window.Shell;
   const api = window.app;
 
   let currentId = null;
@@ -51,40 +51,72 @@
     });
   }
 
-  window.VideoApp = {
-    openProject(id) { currentId = id; draft = null; deletedIds = []; },
-    currentProjectId() { return currentId; },
-  };
+  let editorRoot = null;
+  // 有未保存改动时静默保存（切项目、离开页面前调用）；返回 false 表示保存失败，调用方应停下
+  async function autoSave(root) {
+    if (root && root._isDirty && root._isDirty()) return root._save({ silent: true });
+    return true;
+  }
 
   window.Shell.registerPage({
     id: "editor",
     title: "分镜编辑",
     icon: "note",
     order: 20,
-    async onShow(root) {
-      if (!currentId) { renderEmpty(root); return; }
-      if (!draft || draft.project.id !== currentId) await load(root, currentId);
-    },
     render(root) {
+      editorRoot = root;
       root.classList.add("page-wide");
+      root._bar = window.ProjectPicker.bar({
+        beforeSwitch: () => autoSave(root),
+        onSwitch: (id) => load(root, id),
+      });
       root._body = h("div", { id: "editor-body" });
-      root.append(root._body);
-      if (!currentId) renderEmpty(root);
-      else load(root, currentId).catch((e) => window.Shell.toast(e.message, "error"));
+      root.append(root._bar.el, root._body);
+    },
+    async onShow(root) {
+      await root._bar.refresh();
+      const id = window.VideoApp.currentProjectId();
+      if (!id) { renderEmpty(root); return; }
+      if (!draft || draft.project.id !== id) await load(root, id);
+    },
+    async onHide(root) {
+      stopListen();
+      await autoSave(root);
     },
   });
 
+  // Ctrl/⌘ + S 保存
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "s" || e.key === "S") && window.Shell.current === "editor" && editorRoot && editorRoot._save) {
+      e.preventDefault();
+      editorRoot._save();
+    }
+  });
+
   function renderEmpty(root) {
-    const body = root._body || root;
-    body.textContent = "";
-    body.append(h("header", { class: "page-head" },
-      h("div", {}, h("h1", {}, "分镜编辑"), h("p", { class: "sub" }, "先在“项目”页打开一个项目，再回来编辑它的脚本和分镜。"))),
-      h("button", { class: "btn primary", onclick: () => window.Shell.navigate("projects") }, "去项目列表"));
+    draft = null; currentId = null;
+    root._isDirty = null; root._save = null;
+    root._bar.setMeta("");
+    root._bar.setActions();
+    root._body.replaceChildren(window.ProjectPicker.emptyState(root._bar.projects, async (id) => {
+      window.VideoApp.openProject(id);
+      await root._bar.refresh();
+      await load(root, id);
+    }, "选好项目后在这里写口播、画面描述，生成配音。"));
   }
 
   async function load(root, id) {
     stopListen();
-    const r = await unwrap(await api.video.projects.get(id));
+    let r;
+    try { r = await unwrap(await api.video.projects.get(id)); }
+    catch (e) {
+      window.Shell.toast("打开项目失败：" + e.message, "error");
+      window.VideoApp.openProject(null);
+      await root._bar.refresh();
+      renderEmpty(root);
+      return;
+    }
+    currentId = id;
     draft = { project: { ...r.project }, shots: r.shots.map((s) => ({ ...s })) };
     deletedIds = [];
     renderForm(root);
@@ -102,13 +134,22 @@
     const aspectSelect = h("select", { class: "input" },
       ...[["9:16", "9:16 竖屏"], ["16:9", "16:9 横屏"], ["1:1", "1:1 方形"]].map(([v, l]) => h("option", { value: v }, l)));
     aspectSelect.value = p.aspect || "9:16";
-    const totalEl = h("span", { class: "muted" });
+    const dirtyTag = h("span", { class: "dirty-tag", hidden: true }, "未保存");
+    const infoRow = h("div", { class: "project-info-row", hidden: true },
+      h("label", { class: "form-field grow" }, h("span", { class: "form-label" }, "标题"), titleInput),
+      h("label", { class: "form-field grow" }, h("span", { class: "form-label" }, "标签"), tagsInput),
+      h("label", { class: "form-field" }, h("span", { class: "form-label" }, "画幅"), aspectSelect));
+    const countEl = h("span", { class: "muted" });
     const listBox = h("div", { id: "shot-list", class: "shot-list" });
     const detailBox = h("div", { id: "shot-detail" });
 
     const updateTotals = () => {
       const ts = timings(draft.shots);
-      totalEl.textContent = `共 ${draft.shots.length} 个镜头 · 总时长 ${fmt(ts.length ? ts[ts.length - 1].end : 0)}（有配音的镜头按配音时长，无配音的按约 4.5 字/秒估算）`;
+      const total = fmt(ts.length ? ts[ts.length - 1].end : 0);
+      root._bar.setMeta(`${draft.shots.length} 镜 · ${total} · ${aspectSelect.value}`);
+      countEl.textContent = `${draft.shots.length} 个 · ${total}`;
+      countEl.title = "有配音的镜头按配音时长，没有配音的按约 4.5 字/秒估算";
+      refreshDirty();
       return ts;
     };
 
@@ -118,19 +159,22 @@
       draft.shots.forEach((s, i) => {
         const t = ts[i];
         const preview = (s.narration || "").trim().slice(0, 40) || "（空口播）";
-        const status = s.error ? "失败" : s.audioAssetId ? "有配音" : "待配音";
+        const status = s.error ? h("span", { class: "chip err" }, "失败") : s.audioAssetId ? h("span", { class: "chip ok" }, "已配音") : h("span", { class: "chip" }, "待配音");
+        const clip = s.videoAssetId ? h("span", { class: "chip ok" }, "有画面") : "";
         const row = h("div", {
           class: "shot-row" + (i === selectedIdx ? " selected" : ""),
           onclick: () => { selectedIdx = i; redrawList(); renderDetail(); },
         },
           h("div", { class: "shot-row-head" },
             h("b", {}, `第 ${i + 1} 镜`),
-            h("span", { class: "card-tag" }, fmtRange(t.start, t.end)),
-            h("span", { class: "muted small" }, status)),
+            h("span", { class: "muted small-text grow" }, fmtRange(t.start, t.end)),
+            status, clip),
           h("div", { class: "muted shot-row-preview" }, preview));
         listBox.append(row);
       });
       if (!draft.shots.length) listBox.append(h("p", { class: "muted" }, "还没有镜头，点下面“添加镜头”。"));
+      const sel = listBox.querySelector(".shot-row.selected");
+      if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
     };
 
     const renderDetail = () => {
@@ -146,9 +190,9 @@
       const narration = h("textarea", { class: "input field-full", rows: 4, placeholder: "这镜的口播文案" }, s.narration || "");
       narration.addEventListener("input", () => { s.narration = narration.value; updateTotals(); redrawListLight(); });
       const visual = h("textarea", { class: "input field-full", rows: 3, placeholder: "画面描述：主体、场景、构图、光线" }, s.visual || "");
-      visual.addEventListener("input", () => { s.visual = visual.value; });
-      const imagePrompt = h("textarea", { class: "input field-full", rows: 3, placeholder: "生图提示词（M3 用，可空，默认用画面描述）" }, s.imagePrompt || "");
-      imagePrompt.addEventListener("input", () => { s.imagePrompt = imagePrompt.value; });
+      visual.addEventListener("input", () => { s.visual = visual.value; refreshDirty(); });
+      const imagePrompt = h("textarea", { class: "input field-full", rows: 3, placeholder: "可空，默认用画面描述" }, s.imagePrompt || "");
+      imagePrompt.addEventListener("input", () => { s.imagePrompt = imagePrompt.value; refreshDirty(); });
 
       const listenBtn = h("button", { class: "btn small", disabled: !s.audioAssetId, onclick: () => listenShot(s, listenBtn) }, "试听");
       const genBtn = h("button", { class: "btn small", onclick: () => generateShot(s, genBtn) }, "生成配音");
@@ -163,33 +207,36 @@
           else window.Shell.toast(r.error || "清除失败", "error");
         } }, "清除配音");
 
+      const label = (text, extra) => h("div", { class: "field-label" }, h("span", {}, text), extra ? h("span", { class: "muted small-text" }, extra) : "");
       detailBox.append(
         h("section", { class: "card module shot-detail" },
           h("header", { class: "card-head" },
             h("h2", {}, `第 ${i + 1} 镜`),
-            h("span", { class: "card-tag" }, fmtRange(t.start, t.end)),
+            h("span", { class: "muted small-text" }, fmtRange(t.start, t.end)),
             h("span", { class: "spacer" }),
-            h("button", { class: "btn small", disabled: i === 0, onclick: () => move(i, -1) }, "上移"),
-            h("button", { class: "btn small", disabled: i === draft.shots.length - 1, onclick: () => move(i, 1) }, "下移"),
+            h("button", { class: "btn small ghost", title: "上移", disabled: i === 0, onclick: () => move(i, -1) }, "↑ 上移"),
+            h("button", { class: "btn small ghost", title: "下移", disabled: i === draft.shots.length - 1, onclick: () => move(i, 1) }, "↓ 下移"),
             h("button", { class: "btn small danger-ghost", onclick: () => removeShot(i) }, "删除")),
-          h("p", { class: "card-desc" }, "口播（" + fmt(t.seconds) + "）"),
+          label("口播", "约 " + fmt(t.seconds)),
           narration,
-          h("p", { class: "card-desc" }, "画面描述"),
+          label("画面描述"),
           visual,
-          h("p", { class: "card-desc" }, "生图提示词"),
+          label("即梦提示词", "生成视频片段时用"),
           imagePrompt,
-          h("p", { class: "card-desc" }, "配音"),
-          h("p", { class: "muted" }, "", audioText(s)),
-          h("div", { class: "actions" }, genBtn, importBtn, listenBtn, clearBtn, importInput),
-          h("p", { class: "card-desc" }, "画面"),
-          h("p", { class: "muted" }, "", videoText(s))));
+          h("div", { class: "asset-box" },
+            h("div", { class: "asset-line" },
+              h("b", {}, "配音"), h("span", { class: "muted small-text grow" }, audioText(s).replace(/^配音：/, "")),
+              genBtn, importBtn, listenBtn, clearBtn, importInput),
+            h("div", { class: "asset-line" },
+              h("b", {}, "画面"), h("span", { class: "muted small-text grow" }, videoText(s).replace(/^画面：/, "")),
+              h("button", { class: "btn small", onclick: () => window.Shell.navigate("render") }, "去合成导出")))));
     };
 
     // 只更新列表里的时间标签和预览，不重建输入框，避免打字时丢焦点
     const redrawListLight = () => {
       const ts = timings(draft.shots);
       [...listBox.querySelectorAll(".shot-row")].forEach((rowEl, idx) => {
-        const tag = rowEl.querySelector(".card-tag");
+        const tag = rowEl.querySelector(".shot-row-head .small-text");
         if (tag && ts[idx]) tag.textContent = fmtRange(ts[idx].start, ts[idx].end);
         const prev = rowEl.querySelector(".shot-row-preview");
         const s = draft.shots[idx];
@@ -221,6 +268,15 @@
       s: draft.shots.map((x) => [x.id || "", !!x._new, x.narration || "", x.visual || "", x.imagePrompt || ""]),
     });
     const isDirty = () => snapshot() !== savedSnap;
+    function refreshDirty() {
+      if (!savedSnap) return;
+      const d = isDirty();
+      dirtyTag.hidden = !d;
+      const sb = root._bar.el.querySelector("#btn-save");
+      if (sb) sb.classList.toggle("pulse", d);
+    }
+    root._isDirty = isDirty;
+    root._save = (opts) => save(opts);
     const ensureSaved = async (s) => {
       const idx = draft.shots.indexOf(s);
       if (!isDirty() && !s._new && s.id) return s;
@@ -283,7 +339,7 @@
     };
 
     async function save({ silent = false } = {}) {
-      const btn = body.querySelector("#btn-save");
+      const btn = root._bar.el.querySelector("#btn-save");
       if (btn) btn.disabled = true;
       try {
         const tags = tagsInput.value.split(/[,，、\s]+/).map((t) => t.trim()).filter(Boolean);
@@ -305,35 +361,40 @@
         if (!silent) window.Shell.toast("已保存", "success");
         return true;
       } catch (e) { window.Shell.toast((silent ? "自动保存失败：" : "") + e.message, "error"); return false; }
-      finally { const b = body.querySelector("#btn-save"); if (b) b.disabled = false; }
+      finally { const b = root._bar.el.querySelector("#btn-save"); if (b) b.disabled = false; }
     }
 
+    [titleInput, tagsInput].forEach((el) => el.addEventListener("input", refreshDirty));
+    aspectSelect.addEventListener("change", () => updateTotals());
+    const infoBtn = h("button", { class: "btn", onclick: () => { infoRow.hidden = !infoRow.hidden; infoBtn.classList.toggle("active", !infoRow.hidden); if (!infoRow.hidden) titleInput.focus(); } }, "项目信息");
+    root._bar.setActions(
+      dirtyTag,
+      infoBtn,
+      h("button", { class: "btn", title: "丢掉没保存的改动", onclick: async () => {
+        if (isDirty() && !(await window.Shell.confirm("放弃所有没保存的改动？"))) return;
+        await load(root, currentId);
+      } }, "放弃改动"),
+      h("button", { class: "btn primary", id: "btn-save", title: "保存（Ctrl/⌘ S）", onclick: () => save() }, "保存"),
+      h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "合成导出 →"));
+
     body.append(
-      h("header", { class: "page-head" },
-        h("div", {}, h("h1", {}, "分镜编辑"),
-          h("p", { class: "sub" }, "改完点“保存”，离开页面前没保存的改动会丢；生成/导入配音前会自动保存。"))),
-      modules(card({ title: "项目", icon: "folder" },
-        h("div", { class: "actions" }, titleInput, tagsInput, aspectSelect),
-        h("p", { class: "muted" }, "", totalEl),
-        h("div", { class: "actions" },
-          h("button", { class: "btn primary", id: "btn-save", onclick: () => save() }, "保存"),
-          h("button", { class: "btn", onclick: async () => { await load(root, currentId); window.Shell.toast("已放弃未保存的改动"); } }, "放弃改动"),
-          h("button", { class: "btn", id: "btn-voice-all", onclick: (e) => generateAll(e.currentTarget) }, "生成配音"),
-          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "去合成导出"),
-          h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "即梦片段与合成")))),
+      infoRow,
       h("div", { class: "split-layout editor-layout" },
-        h("div", { class: "split-left" },
+        h("div", { class: "split-left shot-pane" },
+          h("div", { class: "pane-head" },
+            h("b", {}, "镜头"), countEl, h("span", { class: "spacer" }),
+            h("button", { class: "btn small", id: "btn-voice-all", title: "给所有有口播的镜头生成配音", onclick: (e) => generateAll(e.currentTarget) }, "全部配音")),
           listBox,
-          h("div", { class: "actions" },
-            h("button", { class: "btn", onclick: () => {
-              draft.shots.push({ _new: true, _tmp: "new-" + (++newSeq), narration: "", visual: "", imagePrompt: "", status: "pending" });
-              selectedIdx = draft.shots.length - 1;
-              redrawList(); renderDetail();
-            } }, "＋ 添加镜头"))),
+          h("button", { class: "btn block add-shot", onclick: () => {
+            draft.shots.push({ _new: true, _tmp: "new-" + (++newSeq), narration: "", visual: "", imagePrompt: "", status: "pending" });
+            selectedIdx = draft.shots.length - 1;
+            redrawList(); renderDetail();
+          } }, "＋ 添加镜头")),
         h("div", { class: "split-right" }, detailBox)));
 
     savedSnap = snapshot();
     redrawList();
+    refreshDirty();
     renderDetail();
   }
 })();

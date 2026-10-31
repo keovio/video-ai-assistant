@@ -27,14 +27,17 @@
         kind: "jimeng", pageId: "render", title: "即梦", api: api.video.jimeng,
         emptyText: "首次使用请在这里登录即梦，之后会保持登录。",
       });
-      root._head = h("header", { class: "page-head compact" });
+      root._bar = window.ProjectPicker.bar({
+        onSwitch: (id) => { currentId = id; return load(root); },
+        actions: [h("button", { class: "btn", onclick: () => window.Shell.navigate("editor") }, "← 分镜编辑")],
+      });
       root._side = h("div", { class: "workbench-side", id: "render-body" });
-      root.append(root._head, h("div", { class: "workbench" }, browser.el, root._side));
-      currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
+      root.append(root._bar.el, h("div", { class: "workbench" }, browser.el, root._side));
     },
     async onShow(root) {
-      currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
+      currentId = window.VideoApp.currentProjectId();
       if (browser) browser.show();
+      await root._bar.refresh();
       load(root).catch((e) => window.Shell.toast(e.message, "error"));
     },
     async onHide() {
@@ -45,24 +48,27 @@
 
   function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
-  function head(root, title, sub) {
-    root._head.replaceChildren(h("div", {}, h("h1", {}, title), h("p", { class: "sub" }, sub)));
-  }
-
   async function load(root) {
     stopPoll();
     const side = root._side;
-    if (!currentId) {
-      head(root, "合成导出", "先在“项目”页打开一个项目，再回来合成。");
-      side.replaceChildren(h("section", { class: "side-card" },
-        h("h3", {}, "还没有打开项目"),
-        h("p", { class: "muted small-text" }, "左边的即梦可以先登录好；合成需要先选一个项目。"),
-        h("button", { class: "btn primary block", onclick: () => window.Shell.navigate("projects") }, "去项目列表")));
-      return;
-    }
+    const showEmpty = () => {
+      root._bar.setMeta("");
+      side.replaceChildren(h("section", { class: "side-card" }, window.ProjectPicker.emptyState(root._bar.projects, async (id) => {
+        window.VideoApp.openProject(id); currentId = id;
+        await root._bar.refresh();
+        await load(root);
+      }, "左边的即梦可以先登录好；合成要先选一个项目。")));
+    };
+    if (!currentId) { showEmpty(); return; }
     let data;
     try { data = await unwrap(await api.video.projects.get(currentId)); }
-    catch (e) { side.replaceChildren(h("p", { class: "error" }, "加载失败：" + e.message)); return; }
+    catch (e) {
+      window.Shell.toast("打开项目失败：" + e.message, "error");
+      window.VideoApp.openProject(null); currentId = null;
+      await root._bar.refresh();
+      showEmpty();
+      return;
+    }
     const ff = await api.video.ffmpeg.status().catch(() => ({ ok: false, warning: "检测失败" }));
     const renders = await api.video.renders.list(currentId).catch(() => ({ renders: [] }));
     const list = renders.renders || [];
@@ -72,7 +78,7 @@
     const voiced = shots.filter((s) => s.audioAssetId).length;
     const withClip = shots.filter((s) => s.videoAssetId).length;
 
-    head(root, data.project.title || "合成导出", `${shots.length} 个镜头 · 约 ${fmt(data.project.totalSeconds)} · ${data.project.aspect}`);
+    root._bar.setMeta(`${shots.length} 镜 · 约 ${fmt(data.project.totalSeconds)} · ${data.project.aspect}`);
 
     // ---- 合成 ----
     const burnInput = h("input", { type: "checkbox", role: "switch", checked: latest ? latest.burnSubtitles !== false : true });
@@ -98,7 +104,7 @@
       h("span", { class: "chip " + (voiced === shots.length && shots.length ? "ok" : "warn") }, `配音 ${voiced}/${shots.length}`),
       h("span", { class: "chip " + (withClip === shots.length && shots.length ? "ok" : "") }, `画面 ${withClip}/${shots.length}`),
       h("span", { class: "chip " + (ff.ok ? "ok" : "err") }, ff.ok ? "ffmpeg 可用" : "缺少 ffmpeg"));
-    const renderCard = h("section", { class: "side-card" },
+    const renderCard = h("section", { class: "side-card compose-card" },
       h("h3", {}, "合成"),
       readiness,
       ff.ok ? "" : h("div", { class: "hint-bar warn" }, h("span", { class: "grow" }, ff.warning || "合成前请先安装 ffmpeg"),
@@ -169,18 +175,22 @@
         if (r.ok) await load(root);
         else window.Shell.toast(r.error || "清除失败", "error");
       } }, "清除") : "";
-      clipList.append(h("div", { class: "clip-row shot-row" },
+      clipList.append(h("div", { class: "clip-row compact" },
         h("div", { class: "clip-row-head" },
-          h("b", {}, `#${i + 1}`), h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`), audioChip, videoChip),
-        h("div", { class: "clip-row-text", title: s.narration || "" }, s.narration || "（没有口播）"),
-        h("div", { class: "actions" }, genBtn, importBtn, clearBtn, importInput)));
+          h("b", {}, `#${i + 1}`),
+          h("span", { class: "clip-row-text grow", title: s.narration || "" }, s.narration || "（没有口播）"),
+          audioChip, videoChip),
+        h("div", { class: "clip-row-foot" },
+          h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`),
+          genBtn, importBtn, clearBtn, importInput)));
     });
     const shotsCard = h("section", { class: "side-card" },
-      h("h3", {}, h("span", { class: "grow" }, "每镜画面"),
-        h("button", { class: "btn small ghost", onclick: () => window.Shell.navigate("editor") }, "改分镜")),
+      h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`)),
+      h("p", { class: "muted small-text" }, "点“即梦生成”会用这镜的提示词在左边即梦里生成并自动下载；也可以自己生成后“导入”。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 
-    side.replaceChildren(renderCard, ...(latestCard ? [latestCard] : []), shotsCard);
+    // 顺序按做事的先后：先给每镜配画面，再合成，最后看成片
+    side.replaceChildren(shotsCard, renderCard, ...(latestCard ? [latestCard] : []));
     browser.refresh();
 
     if (running) {

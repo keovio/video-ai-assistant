@@ -20,18 +20,13 @@
     render(root, ctx) {
       root.classList.add("page-wide");
       const listBox = h("div", { id: "project-list", class: "project-grid" });
-      // 新建只留右上角一个按钮：标题“未命名项目”、6 个镜头、画幅取设置里的默认值，进编辑器再改
+      // 新建只在这里：右上角按钮弹窗填标题/镜头数/画幅；分镜编辑、合成导出只能选项目
       const newBtn = h("button", { class: "btn primary", id: "new-project-btn", onclick: async () => {
-        newBtn.disabled = true;
-        try {
-          let aspect = "9:16";
-          try { aspect = (window.Shell.getSettings().videoAspect) || "9:16"; } catch { /* ignore */ }
-          const r = await unwrap(await api.video.projects.create({ title: "", shotCount: 6, aspect }));
-          window.VideoApp.openProject(r.project.id);
-          window.Shell.navigate("editor");
-        } catch (e) { window.Shell.toast(e.message, "error"); }
-        finally { newBtn.disabled = false; }
-      } }, "新建项目");
+        const p = await window.ProjectPicker.createDialog();
+        if (!p) return;
+        window.VideoApp.openProject(p.id);
+        window.Shell.navigate("editor");
+      } }, "＋ 新建项目");
       root.append(
         h("header", { class: "page-head" },
           h("div", {}, h("h1", {}, "视频项目"), h("p", { class: "sub" }, "一个项目就是一条口播视频：脚本和分镜 → 配音 → 画面 → 合成导出。")),
