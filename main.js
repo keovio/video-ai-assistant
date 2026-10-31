@@ -257,6 +257,38 @@ function browserUserAgent() {
     : process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
   return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`;
 }
+// 0.6.15：记住每类内嵌浏览器打开的标签（网址+当前标签），下次启动打开时恢复
+const EMBED_TABS_FILE = path.join(DATA_DIR, "embed-tabs.json");
+const embedSaveTimers = new Map();
+function readSavedEmbedTabs(kind) {
+  try {
+    const all = JSON.parse(fs.readFileSync(EMBED_TABS_FILE, "utf8"));
+    const o = all && all[kind];
+    const urls = (o && Array.isArray(o.urls) ? o.urls : []).filter((u) => typeof u === "string" && /^https?:\/\//i.test(u)).slice(0, 12);
+    if (!urls.length) return null;
+    const active = Math.min(urls.length - 1, Math.max(0, Math.floor(Number(o.active) || 0)));
+    return { urls, active };
+  } catch { return null; }
+}
+function saveEmbedTabsNow(kind) {
+  const st = embeddedViews.get(kind);
+  if (!st || !st.loaded) return;
+  const live = st.tabs.filter((t) => !t.view.webContents.isDestroyed());
+  const urls = live.map((t) => t.view.webContents.getURL() || t.pendingUrl || "").filter((u) => /^https?:\/\//i.test(u || ""));
+  if (!urls.length) return;
+  const activeTab = live.find((t) => t.id === st.activeId);
+  const active = Math.max(0, urls.indexOf(activeTab ? (activeTab.view.webContents.getURL() || activeTab.pendingUrl || "") : ""));
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(EMBED_TABS_FILE, "utf8")) || {}; } catch { all = {}; }
+  all[kind] = { urls, active, savedAt: new Date().toISOString() };
+  try { fs.writeFileSync(EMBED_TABS_FILE, JSON.stringify(all, null, 2)); } catch (err) { log.warn("保存内嵌浏览器标签失败：" + err.message); }
+}
+function saveEmbedTabsSoon(kind) {
+  clearTimeout(embedSaveTimers.get(kind));
+  embedSaveTimers.set(kind, setTimeout(() => saveEmbedTabsNow(kind), 800));
+}
+function saveAllEmbedTabs() { for (const kind of embeddedViews.keys()) { clearTimeout(embedSaveTimers.get(kind)); saveEmbedTabsNow(kind); } }
+
 // 0.6.9：每类内嵌视图（jimeng=生成网站浏览器，douyin=视频分析浏览器）支持多标签。
 // st.view 永远指向当前标签的视图，其余代码（显示/隐藏/定位/截图/自动化）照旧只认 st.view。
 let tabSeq = 0;
@@ -383,6 +415,7 @@ function embedState(kind) {
   };
 }
 function pushEmbedState(kind) {
+  saveEmbedTabsSoon(kind);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try { mainWindow.webContents.send("video:embed.state", embedState(kind)); } catch { /* ignore */ }
 }
@@ -507,6 +540,24 @@ async function openEmbeddedView(kind, partition, url) {
   st.pageActive = true;
   showEmbeddedView(kind);
   if (!st.loaded) {
+    // 0.6.15：有上次的标签就恢复：当前标签等加载，其余标签后台加载
+    const saved = readSavedEmbedTabs(kind);
+    if (saved) {
+      for (let i = 1; i < saved.urls.length; i++) {
+        const tab = createTabView(kind, st.partition);
+        if (st.zoom && st.zoom !== 1) { try { tab.view.webContents.setZoomFactor(st.zoom); } catch { /* ignore */ } }
+        st.tabs.push(tab);
+      }
+      saved.urls.forEach((u, i) => {
+        const tab = st.tabs[i];
+        tab.pendingUrl = u;
+        if (i !== saved.active) tab.view.webContents.loadURL(u).catch(() => {});
+      });
+      url = saved.urls[saved.active];
+      st.loaded = true;
+      if (saved.active > 0) switchEmbedTab(kind, st.tabs[saved.active].id);
+      log.info(`内嵌浏览器 ${kind} 恢复上次 ${saved.urls.length} 个标签`);
+    }
     // 抖音/即梦首页会做站内重定向，loadURL 因此常以 ERR_ABORTED(-3) reject，但页面其实已经在加载；
     // 加载慢（超过 25 秒）也不算失败，视图里会继续加载。只有真正的网络错误才报给用户。
     try {
@@ -813,5 +864,5 @@ if (gotLock) {
   });
   // macOS 习惯：关掉窗口应用仍留在 Dock；其他系统直接退出
   app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-  app.on("before-quit", () => { hideAllEmbeddedViews(); tasks.cancelAll(); log.info("退出"); });
+  app.on("before-quit", () => { saveAllEmbedTabs(); hideAllEmbeddedViews(); tasks.cancelAll(); log.info("退出"); });
 }
