@@ -250,6 +250,7 @@
         sub("日志"),
         row("日志级别", "「调试」会记录更多细节，排查问题时再打开", select("logLevel", [["debug", "调试"], ["info", "信息"], ["warn", "警告"], ["error", "错误"]])),
         row("日志面板字号", "右侧运行日志面板（Ctrl/⌘ + L）的文字大小，也可以在面板上按住 Ctrl/⌘ 滚动滚轮", range("logFontSize", { min: 10, max: 18, step: 1, format: (v) => v + " px" })),
+        row("任务开始时展开日志", "有后台任务开始时，自动打开右侧运行日志面板", toggle("logAutoOpen")),
         row("日志文件", "按天保存，保留 7 天", h("button", { class: "btn", onclick: () => api.logs.openDir() }, "打开文件夹")),
         sub("数据"),
         row("数据目录", ctx.system.dataDir, h("button", { class: "btn", onclick: () => api.system.openDataDir() }, "打开")),

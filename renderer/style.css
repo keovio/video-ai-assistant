@@ -566,3 +566,43 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .picker .input { width: 200px; }
 .picker .picker-select { width: 200px; }
 .picker .picker-select[hidden] { display: none; }
+
+/* 运行日志面板：重点 / 全部切换、彩色模块标签、时间分隔、进行中任务 */
+.log-chips { display: flex; gap: 2px; background: var(--hover); border-radius: 8px; padding: 2px; flex: none; }
+.log-chip { border: 0; background: transparent; color: var(--text); opacity: .6; font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+.log-chip.active { opacity: 1; background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.log-tag { padding: 0 7px; border-radius: 999px; font-size: 11px; line-height: 17px; white-space: nowrap; background: var(--hover); color: var(--muted); }
+.log-tag.tag-blue { background: rgba(59,130,246,.13); color: #2563eb; }
+.log-tag.tag-violet { background: rgba(139,92,246,.14); color: #7c3aed; }
+.log-tag.tag-green { background: rgba(34,197,94,.14); color: #16a34a; }
+.log-tag.tag-orange { background: rgba(249,115,22,.14); color: #ea580c; }
+.log-tag.tag-teal { background: rgba(20,184,166,.14); color: #0d9488; }
+.log-tag.tag-pink { background: rgba(236,72,153,.13); color: #db2777; }
+:root[data-theme="dark"] .log-tag.tag-blue { color: #93c5fd; } :root[data-theme="dark"] .log-tag.tag-violet { color: #c4b5fd; } :root[data-theme="dark"] .log-tag.tag-green { color: #86efac; }
+:root[data-theme="dark"] .log-tag.tag-orange { color: #fdba74; } :root[data-theme="dark"] .log-tag.tag-teal { color: #5eead4; } :root[data-theme="dark"] .log-tag.tag-pink { color: #f9a8d4; }
+.log-sep { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; margin: 6px 2px 2px; }
+.log-sep::before, .log-sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+/* 面板顶部的进行中任务 */
+.dock-tasks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.dock-task { padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--line)); background: color-mix(in srgb, var(--primary) 7%, var(--surface)); }
+.dock-task-head { display: flex; align-items: center; gap: 8px; }
+.dock-task-title { flex: 1; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-task-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent); animation: pulse 1.4s ease-in-out infinite; flex: none; }
+.dock-task-dot.queued { background: var(--muted); animation: none; box-shadow: none; }
+@keyframes pulse { 50% { opacity: .35; } }
+:root.perf .dock-task-dot { animation: none; }
+.dock-task-msg { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.dock-task .progress { margin: 6px 0 0; height: 4px; }
+.log-list.compact { display: flex; flex-direction: column; gap: 0; }
+.log-line { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; align-items: baseline; padding: 3px 6px; border-radius: 6px; line-height: 1.5; }
+.log-line + .log-line { border-top: 1px dashed color-mix(in srgb, var(--line) 60%, transparent); }
+.log-line:hover { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.log-line .log-time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .92em; }
+.log-line .log-tag { font-size: .85em; padding: 0 6px; border-radius: 999px; white-space: nowrap; }
+.log-line .log-msg { white-space: pre-wrap; word-break: break-word; }
+.log-line.debug { opacity: .65; }
+.log-line.warn { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.log-line.warn .log-msg { color: var(--warn); }
+.log-line.error { background: color-mix(in srgb, var(--error) 10%, transparent); }
+.log-line.error .log-msg { color: var(--error); font-weight: 500; }
+.log-line.done .log-msg { color: var(--success); }

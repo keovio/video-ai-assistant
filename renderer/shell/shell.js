@@ -392,7 +392,8 @@
     const msg = (err && (err.stack || err.message)) || String(err);
     try { api.logs.write("error", msg, "renderer"); } catch { /* ignore */ }
   }
-  window.addEventListener("error", (e) => reportError(e.error || e.message));
+  // ResizeObserver loop 是浏览器的无害提示（瀑布流重排时偶尔出现），不当错误
+  window.addEventListener("error", (e) => { if (/ResizeObserver loop/.test(String(e.message || ""))) { e.preventDefault(); return; } reportError(e.error || e.message); });
   window.addEventListener("unhandledrejection", (e) => reportError(e.reason));
 
   // 外壳启动完成后执行（页面脚本里用来订阅事件、初始化全局状态）

@@ -6,6 +6,8 @@
 (function () {
   const { h } = window.Shell;
   const api = window.app;
+  // 运行日志里 video 模块显示成中文标签（分析、配音、合成的过程都记在这个模块下）
+  try { if (window.Shell && window.Shell.registerLogScopes) window.Shell.registerLogScopes({ video: ["视频", "violet"] }); } catch { /* ignore */ }
 
   const STYLE_LABELS = {
     visual: "画面风格", camera: "镜头与运镜", pacing: "节奏",
@@ -98,7 +100,7 @@
       aiReady = false;
       if (hint) { hint.className = "hint-bar warn"; hint.textContent = "AI 设置读取失败，请到设置页检查。"; }
     }
-    for (const b of btns) b.disabled = busy || !aiReady;
+    for (const b of btns) b.disabled = busy;
   }
 
   let savedSeq = 0;
@@ -172,8 +174,8 @@
     const linkInput = h("input", { class: "input field-full", placeholder: "抖音视频链接（可选）", value: d.sourceUrl || (currentInfo && currentInfo.url) || "" });
     const captionInput = h("textarea", { class: "input field-full", rows: 3, placeholder: "视频文案 / 补充说明（可选，会一起发给 AI）", value: d.manualText || "" });
 
-    const analyzeBtn = h("button", { class: "btn primary block lg douyin-analyze-btn", id: "douyin-analyze-btn", disabled: true, onclick: () => runAnalyze(root, "extract") }, "分析当前视频");
-    const manualBtn = h("button", { class: "btn douyin-analyze-btn", id: "douyin-analyze-manual-btn", disabled: true, onclick: () => runAnalyze(root, "manual") }, "用手动信息分析");
+    const analyzeBtn = h("button", { class: "btn primary block lg douyin-analyze-btn", id: "douyin-analyze-btn", onclick: () => runAnalyze(root, "extract") }, "分析当前视频");
+    const manualBtn = h("button", { class: "btn douyin-analyze-btn", id: "douyin-analyze-manual-btn", onclick: () => runAnalyze(root, "manual") }, "用手动信息分析");
     const aiHint = h("div", { class: "hint-bar", id: "douyin-ai-hint" }, "正在读取 AI 设置…");
 
     panel.append(
@@ -181,6 +183,8 @@
         h("h3", {}, "当前视频"),
         info,
         analyzeBtn,
+        h("div", { class: "gap-8" }),
+        h("div", { class: "hint-bar", id: "douyin-progress", hidden: true }),
         h("div", { class: "gap-8" }),
         aiHint,
         h("details", { class: "fold" },
@@ -321,14 +325,41 @@
     return r.analysis;
   }
 
+  // 分析进度：按钮显示阶段和已用秒数，结果/错误留在面板里（不只是一闪而过的提示）
+  let tick = null;
+  function setProgress(root, stage, kind = "") {
+    const box = root.querySelector("#douyin-progress");
+    const btn = root.querySelector("#douyin-analyze-btn");
+    if (tick) { clearInterval(tick); tick = null; }
+    if (!box) return;
+    if (!stage) { box.hidden = true; if (btn) btn.textContent = "分析当前视频"; return; }
+    box.hidden = false;
+    box.className = "hint-bar " + (kind || "");
+    if (kind) { box.textContent = stage; if (btn) btn.textContent = "分析当前视频"; return; }
+    const t0 = Date.now();
+    const draw = () => {
+      const sec = Math.floor((Date.now() - t0) / 1000);
+      box.textContent = `${stage}（已用 ${sec} 秒，详细过程看右侧运行日志）`;
+      if (btn) btn.textContent = `分析中… ${sec}s`;
+    };
+    draw();
+    tick = setInterval(() => { if (!box.isConnected) { clearInterval(tick); tick = null; return; } draw(); }, 1000);
+  }
+
   async function runAnalyze(root, mode) {
     if (busy) return;
+    if (!aiReady) {
+      window.Shell.toast("还没配置 AI Key：先到设置里填接口地址、模型和 Key", "error");
+      if (window.Shell.openSettings) window.Shell.openSettings("video-ai");
+      return;
+    }
     const panel = root._panel;
     const linkInput = panel.querySelector("input.field-full");
     const captionInput = panel.querySelector("textarea.field-full");
     const manualText = [captionInput ? captionInput.value : "", linkInput ? linkInput.value : ""].filter(Boolean).join("\n");
     let videoInfo = currentInfo;
     if (mode === "extract") {
+      setProgress(root, "正在读取左侧视频信息…");
       try {
         const r = await api.video.douyin.extract();
         if (!r.ok) throw new Error(r.error || "提取失败");
@@ -336,7 +367,9 @@
         videoInfo = r.info;
         window.Shell.toast("已读到当前视频信息，开始分析…", "success");
       } catch (e) {
-        window.Shell.toast((e && e.message) || "提取失败：请确认已在左侧打开视频详情页，或用下面手动粘贴", "error");
+        const msg = (e && e.message) || "提取失败：请确认已在左侧打开视频详情页，或用下面手动粘贴";
+        setProgress(root, "没读到视频信息：" + msg, "warn");
+        window.Shell.toast(msg, "error");
         return;
       }
     } else {
@@ -351,6 +384,8 @@
     }
     busy = true;
     refreshAiStatus(root).catch(() => {});
+    if (window.Shell.toggleLogDock) { try { window.Shell.toggleLogDock(true); } catch { /* ignore */ } }
+    setProgress(root, mode === "extract" && viewOpened() ? "正在截取画面并请求 AI 分析，通常要 20–90 秒" : "正在请求 AI 分析，通常要 20–60 秒");
     try {
       // “分析当前视频”时顺带截几帧画面给 AI 看（视图开着时）；手动分析不截图
       const r = await api.video.douyin.analyze({ videoInfo, manualText: captionInput ? captionInput.value : "", useFrames: mode === "extract" && viewOpened() });
@@ -363,12 +398,15 @@
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,
         shots: (a.shots || []).map((s) => ({ ...s })), manualText: a.manualText || "",
       };
+      setProgress(root, "");
       renderPanel(root);
       window.Shell.toast(r.usedImages
         ? "分析完成（已结合画面截图），结果已保存，可编辑后导入到项目"
         : "分析完成（仅依据文案，未看画面），结果已保存，可编辑后导入到项目", "success");
     } catch (e) {
-      window.Shell.toast((e && e.message) || "分析失败", "error");
+      const msg = (e && e.message) || "分析失败";
+      setProgress(root, "分析失败：" + msg, "warn");
+      window.Shell.toast(msg, "error");
     } finally {
       busy = false;
       refreshAiStatus(root).catch(() => {});
