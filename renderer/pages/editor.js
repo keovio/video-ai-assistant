@@ -249,7 +249,7 @@
           h("div", { class: "seconds-line" }, secondsInput, secondsHint),
           label("画面描述"),
           visual,
-          label("即梦提示词", "生成视频片段时用"),
+          label("画面提示词", "复制到生成网站做视频片段用"),
           imagePrompt,
           h("div", { class: "asset-box" },
             h("div", { class: "asset-line" },
