@@ -1,6 +1,6 @@
 {
   "name": "video-ai-assistant",
-  "version": "0.6.18",
+  "version": "0.6.19",
   "description": "口播视频自动化：脚本加分镜、配音、画面、合成导出（基于 electron-app-template）",
   "main": "boot/bootstrap.js",
   "private": true,

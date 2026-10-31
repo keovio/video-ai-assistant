@@ -646,3 +646,27 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .shot-prompt { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; user-select: text; cursor: copy; }
 .shot-prompt:hover { outline: 1px solid var(--line); }
 .shot-prompt.empty { color: var(--muted); cursor: default; }
+
+/* 0.6.19 已保存的分析：紧凑列表 */
+.saved-card > summary { cursor: pointer; list-style: none; }
+.saved-card > summary::-webkit-details-marker { display: none; }
+.saved-card > summary h3 { display: flex; align-items: center; gap: 6px; margin: 0; }
+.saved-card > summary h3::before { content: "▸"; font-size: 11px; opacity: .6; transition: transform .15s; }
+.saved-card[open] > summary h3::before { transform: rotate(90deg); }
+.saved-card[open] > summary { margin-bottom: 8px; }
+.saved-tools { display: flex; gap: 6px; margin-bottom: 8px; }
+.saved-tools input { flex: 1; min-width: 0; }
+.saved-tools select { width: auto; }
+.saved-list { max-height: 360px; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.saved-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.saved-item:hover { background: var(--hover, rgba(127,127,127,.1)); }
+.saved-item.current { background: var(--accent-soft, rgba(107,138,253,.14)); }
+.saved-item-text { flex: 1; min-width: 0; }
+.saved-item-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-item-meta { font-size: 12px; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-item-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.saved-item:hover .saved-item-actions, .saved-item.current .saved-item-actions { opacity: 1; }
+.icon-btn { border: 0; background: transparent; color: inherit; width: 24px; height: 24px; border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 24px; padding: 0; }
+.icon-btn:hover { background: var(--hover, rgba(127,127,127,.18)); }
+.icon-btn.danger:hover { color: #e5534b; }
+.saved-more { margin-top: 6px; }

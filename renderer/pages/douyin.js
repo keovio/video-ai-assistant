@@ -103,7 +103,11 @@
     for (const b of btns) b.disabled = busy;
   }
 
+  // 0.6.19：已保存的分析——搜索 + 平台筛选 + 限高滚动 + 分页“显示更多”，条目紧凑一行半
   let savedSeq = 0;
+  let savedCache = [];
+  const savedView = { q: "", site: "", limit: 20 };
+  const SAVED_PAGE = 20;
   async function refreshSavedList(root) {
     const box = root.querySelector("#douyin-saved-list");
     if (!box) return;
@@ -112,27 +116,80 @@
     try { r = await unwrap(await api.video.analyses.list()); }
     catch (e) { if (seq === savedSeq) box.replaceChildren(h("p", { class: "error" }, e.message)); return; }
     if (seq !== savedSeq || !box.isConnected) return;
+    savedCache = Array.isArray(r.analyses) ? r.analyses : [];
+    renderSavedRows(root);
+  }
+
+  function savedMatches(a) {
+    if (savedView.site && (a.site || "web") !== savedView.site) return false;
+    const q = savedView.q.trim().toLowerCase();
+    if (!q) return true;
+    return [a.scriptTitle, a.author, a.sourceTitle, a.sourceUrl].some((x) => String(x || "").toLowerCase().includes(q));
+  }
+
+  function shortWhen(ts) {
+    if (!ts) return "";
+    const d = new Date(ts); if (isNaN(d)) return "";
+    const now = new Date();
+    const hm = d.toTimeString().slice(0, 5);
+    if (d.toDateString() === now.toDateString()) return "今天 " + hm;
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "昨天 " + hm;
+    return (d.getFullYear() === now.getFullYear() ? "" : d.getFullYear() + "/") + (d.getMonth() + 1) + "/" + d.getDate();
+  }
+
+  function renderSavedRows(root) {
+    const box = root.querySelector("#douyin-saved-list");
+    const count = root.querySelector("#douyin-saved-count");
+    const tools = root.querySelector("#douyin-saved-tools");
+    if (!box) return;
+    const all = savedCache;
+    if (count) count.textContent = all.length ? String(all.length) : "";
+    if (tools) tools.hidden = all.length < 6; // 少的时候不显示搜索栏
     box.textContent = "";
-    if (!r.analyses.length) {
+    if (!all.length) {
       box.append(h("p", { class: "muted small-text" }, "还没有保存的分析。分析后点“保存分析”，会留在这里。"));
       return;
     }
-    for (const a of r.analyses) {
-      const when = a.createdAt ? new Date(a.createdAt).toLocaleString() : "";
-      box.append(h("div", { class: "clip-row saved-row" },
-        h("div", { class: "clip-row-head" },
-          h("b", { class: "grow" }, a.scriptTitle || "未命名分析"),
-        h("button", { class: "btn small", onclick: () => loadSaved(root, a.id) }, "打开"),
-        a.sourceUrl ? h("button", { class: "btn small", title: a.sourceUrl, onclick: () => openSource(a.sourceUrl) }, "原视频") : null,
-        h("button", { class: "btn small danger-ghost", onclick: async () => {
-          if (!await window.Shell.confirm(`确定删除这条分析“${a.scriptTitle || "未命名分析"}”吗？`)) return;
-          const res = await api.video.analyses.remove(a.id);
-          if (res.ok) { window.Shell.toast("已删除"); await refreshSavedList(root); }
-          else window.Shell.toast(res.error || "删除失败", "error");
-        } }, "删除")),
-        h("div", { class: "clip-row-text" }, `${a.site && SAVED_SITE[a.site] ? SAVED_SITE[a.site] + " · " : ""}${a.author || "未知作者"}${when ? " · " + when : ""}`),
-        a.sourceUrl ? h("div", { class: "clip-row-text muted small-text source-url", title: a.sourceUrl }, a.sourceUrl) : null));
+    const list = all.filter(savedMatches);
+    if (!list.length) { box.append(h("p", { class: "muted small-text" }, "没有匹配的分析。")); return; }
+    const curId = draft && draft.id;
+    for (const a of list.slice(0, savedView.limit)) {
+      const title = a.scriptTitle || a.sourceTitle || "未命名分析";
+      const meta = [a.site && SAVED_SITE[a.site], a.author || "未知作者", shortWhen(a.createdAt)].filter(Boolean).join(" · ");
+      box.append(h("div", { class: "saved-item" + (a.id === curId ? " current" : ""), title: a.sourceUrl || "", onclick: () => loadSaved(root, a.id) },
+        h("div", { class: "saved-item-text" },
+          h("div", { class: "saved-item-title" }, title),
+          h("div", { class: "saved-item-meta" }, meta)),
+        h("div", { class: "saved-item-actions" },
+          a.sourceUrl ? h("button", { class: "icon-btn", title: "打开原视频：" + a.sourceUrl, onclick: (e) => { e.stopPropagation(); openSource(a.sourceUrl); } }, "↗") : null,
+          h("button", { class: "icon-btn danger", title: "删除", onclick: async (e) => {
+            e.stopPropagation();
+            if (!await window.Shell.confirm(`确定删除这条分析“${title}”吗？`)) return;
+            const res = await api.video.analyses.remove(a.id);
+            if (res.ok) { window.Shell.toast("已删除"); await refreshSavedList(root); }
+            else window.Shell.toast(res.error || "删除失败", "error");
+          } }, "✕"))));
     }
+    if (list.length > savedView.limit) {
+      box.append(h("button", { class: "btn small block saved-more", onclick: () => { savedView.limit += SAVED_PAGE; renderSavedRows(root); } },
+        `显示更多（还有 ${list.length - savedView.limit} 条）`));
+    }
+  }
+
+  function buildSavedCard(root) {
+    const open = localStorage.getItem("douyin.savedOpen") !== "0";
+    const search = h("input", { class: "input", type: "search", placeholder: "搜索标题 / 作者 / 链接", value: savedView.q,
+      oninput: (e) => { savedView.q = e.target.value; savedView.limit = SAVED_PAGE; renderSavedRows(root); } });
+    const site = h("select", { class: "input", value: savedView.site, onchange: (e) => { savedView.site = e.target.value; savedView.limit = SAVED_PAGE; renderSavedRows(root); } },
+      h("option", { value: "" }, "全部平台"),
+      ...Object.entries(SAVED_SITE).map(([k, v]) => h("option", { value: k }, v)));
+    const det = h("details", { class: "side-card saved-card", open },
+      h("summary", {}, h("h3", {}, "已保存的分析 ", h("span", { class: "chip", id: "douyin-saved-count" }))),
+      h("div", { class: "saved-tools", id: "douyin-saved-tools", hidden: true }, search, site),
+      h("div", { id: "douyin-saved-list", class: "saved-list" }));
+    det.addEventListener("toggle", () => localStorage.setItem("douyin.savedOpen", det.open ? "1" : "0"));
+    return det;
   }
 
   const SAVED_SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", web: "网页" };
@@ -215,10 +272,7 @@
       panel.append(buildResultCard(root, d));
     }
 
-    panel.append(
-      h("section", { class: "side-card" },
-        h("h3", {}, "已保存的分析"),
-        h("div", { id: "douyin-saved-list", class: "clip-list" })));
+    panel.append(buildSavedCard(root));
     refreshAiStatus(root).catch(() => {});
     refreshSavedList(root).catch(() => {});
   }
