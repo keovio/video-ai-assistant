@@ -1,7 +1,7 @@
 "use strict";
 // 合成导出页：左边是即梦内嵌浏览器（进页面自动打开，登录一次后保持），
 // 右边是操作面板：合成（开始/进度/烧字幕开关）→ 最近成片（打开/文件夹/重跑/提示）→ 每镜素材（配音与画面状态、
-// 即梦生成 / 导入 / 清除片段）。即梦自动操作失败时视图保持在左边，可手动生成下载后用“导入”导进来。
+// 复制画面提示词 / 导入 / 清除片段）。0.6.14 起去掉“即梦生成”自动化，提示词直接显示，用户自己去生成网站操作。
 (function () {
   const { h } = window.Shell;
   const api = window.app;
@@ -194,16 +194,6 @@
       const videoChip = s.videoAssetId
         ? h("span", { class: "chip ok" }, "片段" + (s.clipSeconds ? " " + fmt(s.clipSeconds) : ""))
         : s.error ? h("span", { class: "chip err", title: s.error }, "生成失败") : h("span", { class: "chip" }, "黑场");
-      const genBtn = h("button", { class: "btn small", title: "用这镜的生视频提示词在左边即梦里生成并自动下载", onclick: async () => {
-        genBtn.disabled = true; genBtn.textContent = "生成中…";
-        try {
-          const r = await api.video.shots.generateClip(s.id);
-          if (!r.ok) window.Shell.toast(r.manual ? "转手动：" + r.error : (r.error || "生成片段失败"), "error");
-          else window.Shell.toast(`第 ${i + 1} 镜片段已挂上`, "success");
-          await load(root);
-        } catch (e) { window.Shell.toast(e.message, "error"); }
-        finally { genBtn.disabled = false; genBtn.textContent = "即梦生成"; }
-      } }, "即梦生成");
       const importInput = h("input", { type: "file", accept: ".mp4,.mov,.webm,.mkv,.m4v,video/*", hidden: true,
         onchange: async () => {
           const f = importInput.files && importInput.files[0]; if (!f) return;
@@ -230,7 +220,10 @@
           audioChip, videoChip),
         h("div", { class: "clip-row-foot" },
           h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`),
-          copyBtn, genBtn, importBtn, clearBtn, importInput)));
+          copyBtn, importBtn, clearBtn, importInput),
+        promptOf(s)
+          ? h("div", { class: "shot-prompt", title: "点一下复制", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制`) }, promptOf(s))
+          : h("div", { class: "shot-prompt empty" }, "还没有画面提示词，去分镜编辑里写画面描述")));
     });
     const shotsCard = h("section", { class: "side-card" },
       h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`),
@@ -238,7 +231,7 @@
           const lines = shots.map((x, k) => promptOf(x) ? `第 ${k + 1} 镜（${fmt(x.end - x.start)}）：${promptOf(x)}` : "").filter(Boolean);
           copyText(lines.join("\n\n"), `已复制 ${lines.length} 镜画面提示词`);
         } }, "全部复制") : ""),
-      h("p", { class: "muted small-text" }, "“即梦生成”会在左边即梦里自动生成并下载；用其他网站（可灵、海螺、Vidu…）就在左边生成后点下载，视频会出现在“浏览器下载”里。也可以“导入”本机文件。"),
+      h("p", { class: "muted small-text" }, "复制每镜的画面提示词，到左边任意生成网站（即梦、可灵、海螺、Vidu…）自己生成并下载，视频会出现在“浏览器下载”里，挂到对应镜头；也可以“导入”本机文件。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 
     // ---- 浏览器下载（0.6.9）：左边任意生成网站里下载的视频，挂到某一镜 ----

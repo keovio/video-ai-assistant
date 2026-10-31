@@ -643,3 +643,6 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .small-select { height: 28px; padding: 0 6px; font-size: 12px; width: auto; }
 .source-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-url a { color: var(--accent, #6b8afd); }
+.shot-prompt { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; user-select: text; cursor: copy; }
+.shot-prompt:hover { outline: 1px solid var(--line); }
+.shot-prompt.empty { color: var(--muted); cursor: default; }
