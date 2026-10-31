@@ -136,7 +136,7 @@
     if (savedView.site && (a.site || "web") !== savedView.site) return false;
     const q = savedView.q.trim().toLowerCase();
     if (!q) return true;
-    return [a.scriptTitle, a.author, a.sourceTitle, a.sourceUrl].some((x) => String(x || "").toLowerCase().includes(q));
+    return [a.scriptTitle, a.author, a.sourceTitle, a.sourceUrl, a.musicName].some((x) => String(x || "").toLowerCase().includes(q));
   }
 
   function shortWhen(ts) {
@@ -216,13 +216,13 @@
       const r = await unwrap(await api.video.analyses.get(id));
       const a = r.analysis;
       draft = {
-        id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption,
+        id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption, musicName: a.musicName || "",
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText,
         style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText,
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,
         shots: (a.shots || []).map((s) => ({ ...s })), manualText: a.manualText || "",
       };
-      currentInfo = { url: a.sourceUrl, site: a.site || "", title: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption,
+      currentInfo = { url: a.sourceUrl, site: a.site || "", title: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption, music: a.musicName || "",
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText };
       renderPanel(root);
       window.Shell.toast("已载入这条分析，可编辑后重新保存或导入到项目");
@@ -241,6 +241,7 @@
       const SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", web: "网页" };
       if (currentInfo.site) chips.push(h("span", { class: "chip" }, SITE[currentInfo.site] || "网页"));
       if (currentInfo.durationSec) chips.push(h("span", { class: "chip" }, Math.round(currentInfo.durationSec) + " 秒"));
+      if (currentInfo.music) chips.push(h("span", { class: "chip", title: "背景音乐：" + currentInfo.music }, "♪ " + currentInfo.music.slice(0, 40)));
       if (currentInfo.viewCountText) chips.push(h("span", { class: "chip" }, "播放 " + currentInfo.viewCountText));
       chips.push(currentInfo.transcript ? h("span", { class: "chip ok", title: currentInfo.transcript.slice(0, 300) }, `字幕 ${currentInfo.transcript.length} 字`) : h("span", { class: "chip" }, "无字幕"));
       if (currentInfo.likeCountText) chips.push(h("span", { class: "chip" }, "赞 " + currentInfo.likeCountText));
@@ -372,6 +373,15 @@
           try { await navigator.clipboard.writeText(d.sourceUrl); window.Shell.toast("已复制原地址", "success"); }
           catch (e) { window.Shell.toast("复制失败：" + e.message, "error"); }
         } }, "复制")) : null,
+      h("label", { class: "form-field music-field" }, h("span", { class: "form-label" }, "背景音乐"),
+        h("div", { class: "row" },
+          h("input", { class: "input grow", maxlength: 200, placeholder: "没读到时可手动填，保存分析时一起存", value: d.musicName || "", oninput: (e) => { d.musicName = e.target.value; } }),
+          h("button", { class: "btn small", onclick: async (e) => {
+            e.preventDefault();
+            const v = String(d.musicName || "").trim();
+            if (!v) { window.Shell.toast("没有背景音乐名称"); return; }
+            try { await navigator.clipboard.writeText(v); window.Shell.toast("已复制音乐名", "success"); } catch (err) { window.Shell.toast("复制失败：" + err.message, "error"); }
+          } }, "复制"))),
       h("div", { class: "actions" }, importBtn, saveBtn),
       h("details", { class: "fold", open: true },
         h("summary", {}, "脚本与分镜"),
@@ -395,6 +405,7 @@
       sourceTitle: d.sourceTitle || (currentInfo && currentInfo.title) || "",
       videoId: d.videoId || (currentInfo && currentInfo.videoId) || "",
       author: d.author || (currentInfo && currentInfo.author) || "",
+      musicName: d.musicName || (currentInfo && currentInfo.music) || "",
       caption: d.caption || (currentInfo && currentInfo.caption) || "",
       likeCountText: d.likeCountText || (currentInfo && currentInfo.likeCountText) || "",
       commentCountText: d.commentCountText || (currentInfo && currentInfo.commentCountText) || "",
@@ -489,7 +500,7 @@
       if (!r.ok) throw new Error(r.error || "分析失败");
       const a = r.record;
       draft = {
-        id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption,
+        id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption, musicName: a.musicName || "",
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText,
         style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText,
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,

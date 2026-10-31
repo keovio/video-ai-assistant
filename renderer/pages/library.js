@@ -86,7 +86,7 @@
     if (observer) observer.disconnect();
     const q = state.q.trim().toLowerCase();
     const renders = state.renders.filter((r) => has(q, r.projectTitle, r.outputPath, r.error));
-    const analyses = state.analyses.filter((a) => has(q, a.scriptTitle, a.sourceTitle, a.author, a.sourceUrl, a.caption));
+    const analyses = state.analyses.filter((a) => has(q, a.scriptTitle, a.sourceTitle, a.author, a.sourceUrl, a.caption, a.musicName));
     if (state.error) { body.append(h("p", { class: "error" }, state.error)); return; }
 
     if (state.tab !== "analyses") body.append(section(root, "renders", "成片", renders, renderCard,
@@ -176,7 +176,7 @@
           shots ? h("span", { class: "chip" }, `${shots} 镜`) : null,
           Array.isArray(a.shots) ? h("span", { class: "chip" }, speech ? "有口播" : "无口播") : null),
         h("div", { class: "lib-card-title two-line", title }, title),
-        h("div", { class: "lib-card-meta" }, [a.author || "未知作者", fmtWhen(a.createdAt)].filter(Boolean).join(" · ")),
+        h("div", { class: "lib-card-meta" }, [a.author || "未知作者", a.musicName ? "♪ " + a.musicName.slice(0, 30) : "", fmtWhen(a.createdAt)].filter(Boolean).join(" · ")),
         a.sourceUrl ? h("div", { class: "muted small-text source-url", title: a.sourceUrl }, a.sourceUrl) : null,
         h("div", { class: "lib-actions" },
           h("button", { class: "btn small primary", onclick: (e) => { e.stopPropagation(); window.VideoAnalysis && window.VideoAnalysis.open(a.id); } }, "打开"),
