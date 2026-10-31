@@ -641,3 +641,5 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .browser-bm:hover .browser-bm-x { visibility: visible; }
 .browser-bm-x:hover { background: var(--line); color: var(--text); }
 .small-select { height: 28px; padding: 0 6px; font-size: 12px; width: auto; }
+.source-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-url a { color: var(--accent, #6b8afd); }

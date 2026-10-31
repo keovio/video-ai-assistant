@@ -123,14 +123,23 @@
         h("div", { class: "clip-row-head" },
           h("b", { class: "grow" }, a.scriptTitle || "未命名分析"),
         h("button", { class: "btn small", onclick: () => loadSaved(root, a.id) }, "打开"),
+        a.sourceUrl ? h("button", { class: "btn small", title: a.sourceUrl, onclick: () => openSource(a.sourceUrl) }, "原视频") : null,
         h("button", { class: "btn small danger-ghost", onclick: async () => {
           if (!await window.Shell.confirm(`确定删除这条分析“${a.scriptTitle || "未命名分析"}”吗？`)) return;
           const res = await api.video.analyses.remove(a.id);
           if (res.ok) { window.Shell.toast("已删除"); await refreshSavedList(root); }
           else window.Shell.toast(res.error || "删除失败", "error");
         } }, "删除")),
-        h("div", { class: "clip-row-text" }, `${a.author || "未知作者"}${when ? " · " + when : ""}`)));
+        h("div", { class: "clip-row-text" }, `${a.site && SAVED_SITE[a.site] ? SAVED_SITE[a.site] + " · " : ""}${a.author || "未知作者"}${when ? " · " + when : ""}`),
+        a.sourceUrl ? h("div", { class: "clip-row-text muted small-text source-url", title: a.sourceUrl }, a.sourceUrl) : null));
     }
+  }
+
+  const SAVED_SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", web: "网页" };
+  // 在左边内嵌浏览器新标签里打开原视频
+  function openSource(url) {
+    if (!/^https?:\/\//i.test(String(url || ""))) { window.Shell.toast("原地址无效", "error"); return; }
+    api.video.embed.nav("douyin", "newTab", url).catch((e) => window.Shell.toast("打开失败：" + e.message, "error"));
   }
 
   async function loadSaved(root, id) {
@@ -138,13 +147,13 @@
       const r = await unwrap(await api.video.analyses.get(id));
       const a = r.analysis;
       draft = {
-        id: a.id, sourceUrl: a.sourceUrl, videoId: a.videoId, author: a.author, caption: a.caption,
+        id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption,
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText,
         style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText,
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,
         shots: (a.shots || []).map((s) => ({ ...s })), manualText: a.manualText || "",
       };
-      currentInfo = { url: a.sourceUrl, videoId: a.videoId, author: a.author, caption: a.caption,
+      currentInfo = { url: a.sourceUrl, site: a.site || "", title: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption,
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText };
       renderPanel(root);
       window.Shell.toast("已载入这条分析，可编辑后重新保存或导入到项目");
@@ -290,6 +299,13 @@
 
     return h("section", { class: "side-card" },
       h("h3", {}, h("span", { class: "grow" }, "分析结果"), h("span", { class: "chip" }, `${d.shots.length} 镜`)),
+      d.sourceUrl ? h("p", { class: "muted small-text source-url" }, "原视频：",
+        h("a", { href: "#", title: d.sourceUrl, onclick: (e) => { e.preventDefault(); openSource(d.sourceUrl); } }, d.sourceTitle || d.sourceUrl),
+        " ",
+        h("button", { class: "btn small", onclick: async () => {
+          try { await navigator.clipboard.writeText(d.sourceUrl); window.Shell.toast("已复制原地址", "success"); }
+          catch (e) { window.Shell.toast("复制失败：" + e.message, "error"); }
+        } }, "复制")) : null,
       h("div", { class: "actions" }, importBtn, saveBtn),
       h("details", { class: "fold", open: true },
         h("summary", {}, "脚本与分镜"),
@@ -309,6 +325,8 @@
     const payload = {
       ...(d.id ? { id: d.id } : {}),
       sourceUrl: d.sourceUrl || (currentInfo && currentInfo.url) || "",
+      site: d.site || (currentInfo && currentInfo.site) || "",
+      sourceTitle: d.sourceTitle || (currentInfo && currentInfo.title) || "",
       videoId: d.videoId || (currentInfo && currentInfo.videoId) || "",
       author: d.author || (currentInfo && currentInfo.author) || "",
       caption: d.caption || (currentInfo && currentInfo.caption) || "",
@@ -405,7 +423,7 @@
       if (!r.ok) throw new Error(r.error || "分析失败");
       const a = r.record;
       draft = {
-        id: a.id, sourceUrl: a.sourceUrl, videoId: a.videoId, author: a.author, caption: a.caption,
+        id: a.id, sourceUrl: a.sourceUrl, site: a.site || "", sourceTitle: a.sourceTitle || "", videoId: a.videoId, author: a.author, caption: a.caption,
         likeCountText: a.likeCountText, commentCountText: a.commentCountText, shareCountText: a.shareCountText,
         style: { ...a.style }, skill: { ...a.skill }, skillText: a.skillText,
         scriptTitle: a.scriptTitle, scriptNarration: a.scriptNarration,

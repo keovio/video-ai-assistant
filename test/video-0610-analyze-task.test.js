@@ -34,3 +34,15 @@ test("分析出现在后台任务里，取消后返回 cancelled", async () => {
   assert.equal(r.cancelled, true);
   assert.equal(tasks.list()[0].status, "cancelled");
 });
+
+test("0.6.12：分析记录保存原地址、平台和标题", () => {
+  const os = require("os"), path = require("path"), fs = require("fs");
+  const { createVideoStore } = require("../lib/video-store");
+  const store = createVideoStore(fs.mkdtempSync(path.join(os.tmpdir(), "va-")));
+  const r = store.analyses.upsert({ sourceUrl: "https://www.bilibili.com/video/BV1xx", site: "bilibili", sourceTitle: "标题", scriptTitle: "T" });
+  const got = store.analyses.get(r.id);
+  assert.equal(got.sourceUrl, "https://www.bilibili.com/video/BV1xx");
+  assert.equal(got.site, "bilibili");
+  assert.equal(got.sourceTitle, "标题");
+  assert.equal(store.analyses.upsert({ site: "evil" }).site, "");
+});
