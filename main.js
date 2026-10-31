@@ -578,7 +578,8 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
   const st = embeddedViews.get(kind);
   if (!st || !st.loaded || st.view.webContents.isDestroyed()) return [];
   const out = [];
-  const n = Math.max(1, Math.min(4, Number(count) || 1));
+  const n = Math.max(1, Math.min(8, Number(count) || 1));
+  const times = []; const diffs = []; let prevSig = null;
   const wc = st.view.webContents;
   // 0.6.8：视频超过 8 秒时按时长均匀跳到几个位置截图（开头/中段/结尾都看到），截完回到原位置；
   // 读不到视频元素时退回按间隔连续截。
@@ -595,11 +596,21 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
       let img = await withTimeout(wc.capturePage(), 5000, "截图");
       if (!img || img.isEmpty()) continue;
       const size = img.getSize();
+      // 0.6.17：16×16 灰度缩略图做相邻截图差异（0=完全一样，1=完全不同），帮 AI 判断有没有换镜
+      try {
+        const bmp = img.resize({ width: 16, height: 16 }).toBitmap();
+        const sig = [];
+        for (let p = 0; p + 2 < bmp.length; p += 4) sig.push((bmp[p] + bmp[p + 1] + bmp[p + 2]) / 765);
+        if (prevSig && prevSig.length === sig.length) diffs.push(Math.round(sig.reduce((a, v, k) => a + Math.abs(v - prevSig[k]), 0) / sig.length * 100) / 100);
+        prevSig = sig;
+      } catch { /* ignore */ }
       if (size.width > 540) img = img.resize({ width: 540 });
       out.push("data:image/jpeg;base64," + img.toJPEG(70).toString("base64"));
+      times.push(seekPlan ? seekPlan.points[i] : null);
     } catch (err) { log.warn("截取画面失败：" + ((err && err.message) || err)); }
   }
   if (seekPlan) await seek(seekPlan.cur);
+  out.times = times; out.diffs = diffs;
   return out;
 }
 

@@ -94,10 +94,21 @@ test("分析结果校验：规范化、秒数兜底、skill 名清洗、缺字�
   assert.throws(() => validateAnalysis({}), (e) => e.code === "VALIDATION_FAILED");
   assert.throws(() => validateAnalysis({ ...VALID_RAW, style: {} }), (e) => e.code === "VALIDATION_FAILED");
   assert.throws(() => validateAnalysis({ ...VALID_RAW, script: { title: "t", narration: "n", shots: [] } }), (e) => e.code === "VALIDATION_FAILED");
+  // 0.6.17：没口播的纯画面镜头允许；口播和画面都空才报错
+  const silent = validateAnalysis({ ...VALID_RAW, script: { title: "t", narration: "n", shots: [{ narration: "  ", visual: "v" }] } });
+  assert.equal(silent.script.shots.length, 1);
+  assert.equal(silent.script.shots[0].narration, "");
+  assert.equal(silent.script.shots[0].seconds, 3);
   assert.throws(
-    () => validateAnalysis({ ...VALID_RAW, script: { title: "t", narration: "n", shots: [{ narration: "  ", visual: "v" }] } }),
+    () => validateAnalysis({ ...VALID_RAW, script: { title: "t", narration: "n", shots: [{ narration: " ", visual: " " }] } }),
     (e) => e.code === "VALIDATION_FAILED",
   );
+  // hasSpeech=false：口播全部清空，不让 AI 塞字
+  const noSpeech = validateAnalysis({ ...VALID_RAW, script: { title: "t", hasSpeech: false, narration: "编的口播", shots: [{ narration: "编的", visual: "一镜到底的街景", seconds: 12 }] } });
+  assert.equal(noSpeech.script.narration, "");
+  assert.equal(noSpeech.script.shots[0].narration, "");
+  assert.equal(noSpeech.script.hasSpeech, false);
+  assert.equal(noSpeech.script.shots[0].seconds, 12);
   assert.equal(slugifySkillName("  Hello World!! "), "hello-world");
   assert.equal(slugifySkillName(""), "douyin-style");
 });
@@ -257,4 +268,18 @@ test("IPC AI Key：状态只暴露末 4 位，保存/清除走同一密钥存储
   assert.equal(cleared.set, false);
   const st2 = await h["video:ai.status"](null);
   assert.equal(st2.set, false);
+});
+
+test("0.6.17：截图差异提示一镜到底，prompt 不把简介当口播", async () => {
+  let sent = null;
+  const fetchImpl = async (_u, o) => { sent = JSON.parse(o.body); return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify(VALID_RAW) }, finish_reason: "stop" }] }) }; };
+  await analyzeVideo({ fetchImpl, apiKey: "k", baseUrl: "https://x/v1", model: "m", images: ["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"], frameTimes: [1, 9], frameDiffs: [0.02], videoInfo: { url: "https://www.douyin.com/video/1", caption: "简介" } });
+  const sys = sent.messages[0].content;
+  const user = sent.messages[1].content[0].text;
+  assert.match(sys, /一镜到底/);
+  assert.match(sys, /hasSpeech/);
+  assert.match(user, /不是口播/);
+  assert.match(user, /没有读到字幕原文/);
+  assert.match(user, /截图时间点：1 秒、9 秒/);
+  assert.match(user, /很可能是一镜到底/);
 });

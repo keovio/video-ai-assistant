@@ -335,7 +335,7 @@
       shareCountText: d.shareCountText || (currentInfo && currentInfo.shareCountText) || "",
       style: d.style, skill: d.skill, skillText: d.skillText,
       scriptTitle: d.scriptTitle, scriptNarration: d.scriptNarration,
-      shots: d.shots.filter((s) => String(s.narration || "").trim()),
+      shots: d.shots.filter((s) => String(s.narration || "").trim() || String(s.visual || "").trim() || String(s.imagePrompt || "").trim()),
       manualText: d.manualText || "",
     };
     const r = await unwrap(await api.video.analyses.upsert(payload));
