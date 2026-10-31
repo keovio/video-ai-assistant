@@ -24,9 +24,11 @@
     render(root) {
       root.classList.add("page-wide");
       browser = window.EmbedBrowser.create({
-        kind: "jimeng", pageId: "render", title: "即梦", api: api.video.jimeng,
-        emptyText: "首次使用请在这里登录即梦，之后会保持登录。",
+        kind: "jimeng", pageId: "render", title: "生成网站", api: api.video.jimeng,
+        emptyText: "可以用即梦、可灵、海螺、Vidu 等任意网站生成视频；在这里下载的视频会自动收进右边“浏览器下载”。",
       });
+      // 浏览器里下载完成时刷新右栏（只在本页可见时）
+      api.video.downloads.onChanged(() => { if (root.isConnected && currentId && !root.hidden) load(root).catch(() => {}); });
       root._bar = window.ProjectPicker.bar({
         onSwitch: (id) => { currentId = id; return load(root); },
         actions: [h("button", { class: "btn", onclick: () => window.Shell.navigate("editor") }, "← 分镜编辑")],
@@ -224,11 +226,44 @@
     });
     const shotsCard = h("section", { class: "side-card" },
       h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`)),
-      h("p", { class: "muted small-text" }, "点“即梦生成”会用这镜的提示词在左边即梦里生成并自动下载；也可以自己生成后“导入”。"),
+      h("p", { class: "muted small-text" }, "“即梦生成”会在左边即梦里自动生成并下载；用其他网站（可灵、海螺、Vidu…）就在左边生成后点下载，视频会出现在“浏览器下载”里。也可以“导入”本机文件。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 
+    // ---- 浏览器下载（0.6.9）：左边任意生成网站里下载的视频，挂到某一镜 ----
+    const dl = await api.video.downloads.list().catch(() => ({ files: [] }));
+    const files = (dl && dl.files) || [];
+    let downloadsCard = null;
+    if (files.length && shots.length) {
+      const firstEmpty = Math.max(0, shots.findIndex((s) => !s.videoAssetId));
+      const dlList = h("div", { class: "clip-list" });
+      files.forEach((f) => {
+        const target = h("select", { class: "input small-select" }, ...shots.map((s, i) => h("option", { value: s.id }, `第 ${i + 1} 镜${s.videoAssetId ? "（替换）" : ""}`)));
+        target.value = shots[firstEmpty] ? shots[firstEmpty].id : shots[0].id;
+        const attachBtn = h("button", { class: "btn small primary", onclick: async () => {
+          attachBtn.disabled = true;
+          const r = await api.video.downloads.attach(f.name, target.value).catch((e) => ({ ok: false, error: e.message }));
+          if (!r.ok) { window.Shell.toast(r.error || "挂上失败", "error"); attachBtn.disabled = false; return; }
+          window.Shell.toast("片段已挂上" + (r.seconds ? `（${fmt(r.seconds)}）` : ""), "success");
+          await load(root);
+        } }, "挂上");
+        const delBtn = h("button", { class: "btn small ghost", title: "删除这个下载", onclick: async () => {
+          await api.video.downloads.remove(f.name).catch(() => {});
+          await load(root);
+        } }, "删除");
+        dlList.append(h("div", { class: "clip-row compact" },
+          h("div", { class: "clip-row-head" },
+            h("span", { class: "clip-row-text grow", title: f.label }, f.label),
+            h("span", { class: "muted small-text" }, (f.bytes / 1048576).toFixed(1) + " MB")),
+          h("div", { class: "clip-row-foot" }, h("span", { class: "grow" }), target, attachBtn, delBtn)));
+      });
+      downloadsCard = h("section", { class: "side-card" },
+        h("h3", {}, h("span", { class: "grow" }, "浏览器下载"), h("button", { class: "btn small ghost", onclick: () => api.video.downloads.openFolder() }, "打开文件夹")),
+        h("p", { class: "muted small-text" }, "在左边网站里下载的视频会出现在这里，选好镜头点“挂上”。"),
+        dlList);
+    }
+
     // 顺序按做事的先后：先给每镜配画面，再合成，最后看成片
-    side.replaceChildren(shotsCard, renderCard, ...(latestCard ? [latestCard] : []));
+    side.replaceChildren(...(downloadsCard ? [downloadsCard] : []), shotsCard, renderCard, ...(latestCard ? [latestCard] : []));
     browser.refresh();
 
     if (running) {

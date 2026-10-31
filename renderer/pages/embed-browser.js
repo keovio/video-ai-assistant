@@ -55,6 +55,33 @@
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 
+  // 0.6.9 收藏：按浏览器类别存本机；第一次用时给几个常用站点
+  const DEFAULT_BOOKMARKS = {
+    douyin: [
+      { title: "抖音", url: "https://www.douyin.com" },
+      { title: "B 站", url: "https://www.bilibili.com" },
+      { title: "YouTube", url: "https://www.youtube.com" },
+    ],
+    jimeng: [
+      { title: "即梦", url: "https://jimeng.jianying.com" },
+      { title: "可灵", url: "https://app.klingai.com/cn/" },
+      { title: "海螺", url: "https://hailuoai.com/video" },
+      { title: "Vidu", url: "https://www.vidu.cn" },
+    ],
+  };
+  const bmKey = (kind) => `embed.bookmarks.${kind}`;
+  function loadBookmarks(kind) {
+    try {
+      const raw = localStorage.getItem(bmKey(kind));
+      if (raw == null) return (DEFAULT_BOOKMARKS[kind] || []).slice();
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.filter((b) => b && typeof b.url === "string" && /^https?:\/\//.test(b.url)).slice(0, 40) : [];
+    } catch { return (DEFAULT_BOOKMARKS[kind] || []).slice(); }
+  }
+  function saveBookmarks(kind, list) { try { localStorage.setItem(bmKey(kind), JSON.stringify(list.slice(0, 40))); } catch { /* ignore */ } }
+  const sameUrl = (a, b) => String(a || "").replace(/[#?].*$/, "").replace(/\/+$/, "") === String(b || "").replace(/[#?].*$/, "").replace(/\/+$/, "");
+  const hostLabel = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
+
   function create({ kind, pageId, title, api, autoOpen = true, emptyText = "" }) {
     const btn = (name, label, onclick) => h("button", { class: "browser-btn", title: label, "aria-label": label, onclick }, icon(name));
     const nav = (action, arg) => app.video.embed.nav(kind, action, arg).catch(() => {});
@@ -63,6 +90,58 @@
     const reload = btn("refresh", "刷新", () => nav(e.loading ? "stop" : "reload"));
     const home = btn("home", "主页", () => (e.opened ? nav("home") : open()));
     const ext = btn("external", "在系统浏览器打开", () => nav("external"));
+    // 收藏当前页（再点一次取消）
+    const starBtn = btn("star", "收藏当前网页", () => {
+      if (!e.url || !/^https?:/.test(e.url)) return;
+      const list = loadBookmarks(kind);
+      const i = list.findIndex((b) => sameUrl(b.url, e.url));
+      if (i >= 0) list.splice(i, 1);
+      else list.push({ title: (e.title || hostLabel(e.url)).slice(0, 40), url: e.url });
+      saveBookmarks(kind, list);
+      drawBookmarks();
+    });
+    // 标签栏
+    const tabsEl = h("div", { class: "browser-tabs-list" });
+    const newTabBtn = h("button", { class: "browser-tab-new", title: "新标签页（Ctrl/⌘ T）", "aria-label": "新标签页",
+      onclick: () => (e.opened ? nav("newTab") : open()) }, icon("plus"));
+    const tabStrip = h("div", { class: "browser-tabs" }, tabsEl, newTabBtn);
+    function drawTabs(tabs) {
+      tabsEl.textContent = "";
+      for (const t of tabs || []) {
+        const label = (t.title || hostLabel(t.url) || "新标签页").slice(0, 40);
+        const close = h("span", { class: "browser-tab-x", title: "关闭标签（Ctrl/⌘ W）", onclick: (ev) => { ev.stopPropagation(); nav("closeTab", t.id); } }, "×");
+        tabsEl.append(h("div", {
+          class: "browser-tab" + (t.active ? " active" : "") + (t.loading ? " loading" : ""), title: `${label}\n${t.url || ""}`,
+          onclick: () => { if (!t.active) nav("switchTab", t.id); },
+          onauxclick: (ev) => { if (ev.button === 1) nav("closeTab", t.id); },
+        }, h("span", { class: "browser-tab-title" }, label), close));
+      }
+    }
+    // 收藏栏：点击在当前标签打开，Ctrl/⌘ 点击或中键开新标签，× 删除
+    const bmBar = h("div", { class: "browser-bookmarks" });
+    function drawBookmarks() {
+      const list = loadBookmarks(kind);
+      bmBar.textContent = "";
+      const goTo = (url, newTab) => {
+        if (!e.opened) { open().then(() => nav("go", url)); return; }
+        nav(newTab ? "newTab" : "go", url);
+      };
+      for (const b of list) {
+        const x = h("span", { class: "browser-bm-x", title: "删除这个收藏", onclick: (ev) => {
+          ev.stopPropagation();
+          saveBookmarks(kind, loadBookmarks(kind).filter((y) => !sameUrl(y.url, b.url)));
+          drawBookmarks();
+        } }, "×");
+        bmBar.append(h("button", { class: "browser-bm", title: `${b.title}\n${b.url}\nCtrl/⌘ 点击在新标签打开`,
+          onclick: (ev) => goTo(b.url, ev.metaKey || ev.ctrlKey),
+          onauxclick: (ev) => { if (ev.button === 1) goTo(b.url, true); },
+        }, h("span", {}, b.title || hostLabel(b.url)), x));
+      }
+      if (!list.length) bmBar.append(h("span", { class: "muted small-text" }, "点地址栏右边的 ☆ 收藏当前网页"));
+      const starred = !!e.url && list.some((b) => sameUrl(b.url, e.url));
+      starBtn.classList.toggle("on", starred);
+      starBtn.title = starred ? "取消收藏" : "收藏当前网页";
+    }
     // 缩放：- 百分比 +，点百分比回到 100%；按站点记在本机（localStorage），下次打开自动套用
     const zoomKey = `embed.zoom.${kind}`;
     const savedZoom = () => { const z = Number(localStorage.getItem(zoomKey)); return z >= 0.5 && z <= 2 ? z : 1; };
@@ -70,7 +149,7 @@
     const zoomIn = btn("plus", "放大（Ctrl/⌘ +）", () => nav("zoomIn"));
     const zoomLabel = h("button", { class: "browser-zoom", title: "恢复 100%（Ctrl/⌘ 0）", onclick: () => nav("zoom", 1) }, "100%");
     const lock = h("span", { class: "browser-lock" }, icon("lock"));
-    const addr = h("input", { class: "browser-addr", spellcheck: "false", placeholder: kind === "douyin" ? "输入网址，或搜索抖音" : "输入网址" });
+    const addr = h("input", { class: "browser-addr", spellcheck: "false", placeholder: kind === "douyin" ? "输入网址，或在当前网站里搜索" : "输入网址" });
     addr.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && addr.value.trim()) { addr.blur(); if (e.opened) nav("go", addr.value.trim()); else open().then(() => nav("go", addr.value.trim())); }
       if (ev.key === "Escape") { addr.value = e.url || ""; addr.blur(); }
@@ -82,12 +161,14 @@
       emptyText ? h("p", { class: "muted small-text" }, emptyText) : null);
     const viewport = h("div", { class: "browser-viewport", id: `${kind}-view-placeholder` }, status);
     const el = h("div", { class: "browser", "data-kind": kind },
+      tabStrip,
       h("div", { class: "browser-bar" }, back, fwd, reload, home,
-        h("div", { class: "browser-addr-wrap" }, lock, addr),
+        h("div", { class: "browser-addr-wrap" }, lock, addr, starBtn),
         h("div", { class: "browser-zoom-group" }, zoomOut, zoomLabel, zoomIn), ext),
+      bmBar,
       progress, viewport);
 
-    const e = { kind, pageId, api, viewport, active: false, opened: false, shown: false, loading: false, url: "", opening: null };
+    const e = { kind, pageId, api, viewport, active: false, opened: false, shown: false, loading: false, url: "", title: "", opening: null };
     entries.push(e);
     if (ro) ro.observe(viewport);
 
@@ -95,6 +176,8 @@
       if (!st) return;
       e.loading = !!st.loading;
       e.url = st.url || e.url;
+      if (st.title != null) e.title = st.title;
+      if (Array.isArray(st.tabs)) drawTabs(st.tabs);
       back.disabled = !st.canGoBack;
       fwd.disabled = !st.canGoForward;
       ext.disabled = !e.opened;
@@ -111,6 +194,7 @@
         if (e.opened) localStorage.setItem(zoomKey, String(z));
       }
       if (document.activeElement !== addr) addr.value = e.url || "";
+      drawBookmarks();
     }
     draw({ canGoBack: false, canGoForward: false, zoom: savedZoom() });
     app.video.embed.onState((st) => { if (st && st.kind === kind) draw(st); });

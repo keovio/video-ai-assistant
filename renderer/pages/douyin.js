@@ -41,7 +41,7 @@
 
   window.Shell.registerPage({
     id: "douyin",
-    title: "抖音分析",
+    title: "视频分析",
     icon: "search",
     order: 26,
     render(root) {
@@ -67,16 +67,16 @@
     body.textContent = "";
 
     browser = window.EmbedBrowser.create({
-      kind: "douyin", pageId: "douyin", title: "抖音", api: api.video.douyin,
-      emptyText: "首次使用请在这里登录抖音，之后会保持登录。",
+      kind: "douyin", pageId: "douyin", title: "视频网站", api: api.video.douyin,
+      emptyText: "支持抖音、B 站、YouTube（YouTube 需要你的网络能打开），也可以打开其他视频网站。登录一次后会保持。",
     });
     // 右侧面板：当前视频 + 分析结果 + 已保存的分析，全部由 renderPanel 重绘
     const panel = h("div", { id: "douyin-panel", class: "workbench-side" });
 
     body.append(
       h("header", { class: "page-head compact" },
-        h("div", {}, h("h1", {}, "抖音分析"),
-          h("p", { class: "sub" }, "在左边刷抖音、点开一个视频，然后点右边的“分析当前视频”。"))),
+        h("div", {}, h("h1", {}, "视频分析"),
+          h("p", { class: "sub" }, "在左边打开抖音、B 站或 YouTube 的一个视频，然后点右边的“分析当前视频”。B 站和 YouTube 有字幕时会一起读。"))),
       h("div", { class: "workbench" }, browser.el, panel));
     root._panel = panel;
     renderPanel(root);
@@ -160,18 +160,24 @@
     const info = h("div", { id: "douyin-current-info" });
     if (currentInfo) {
       const chips = [];
+      const SITE = { douyin: "抖音", bilibili: "B 站", youtube: "YouTube", web: "网页" };
+      if (currentInfo.site) chips.push(h("span", { class: "chip" }, SITE[currentInfo.site] || "网页"));
+      if (currentInfo.durationSec) chips.push(h("span", { class: "chip" }, Math.round(currentInfo.durationSec) + " 秒"));
+      if (currentInfo.viewCountText) chips.push(h("span", { class: "chip" }, "播放 " + currentInfo.viewCountText));
+      chips.push(currentInfo.transcript ? h("span", { class: "chip ok", title: currentInfo.transcript.slice(0, 300) }, `字幕 ${currentInfo.transcript.length} 字`) : h("span", { class: "chip" }, "无字幕"));
       if (currentInfo.likeCountText) chips.push(h("span", { class: "chip" }, "赞 " + currentInfo.likeCountText));
       if (currentInfo.commentCountText) chips.push(h("span", { class: "chip" }, "评 " + currentInfo.commentCountText));
       if (currentInfo.shareCountText) chips.push(h("span", { class: "chip" }, "转 " + currentInfo.shareCountText));
       info.append(
-        h("p", {}, h("b", {}, currentInfo.author || "（未读到作者）")),
+        currentInfo.title ? h("p", {}, h("b", {}, currentInfo.title.slice(0, 80))) : "",
+        h("p", {}, currentInfo.title ? h("span", { class: "muted" }, currentInfo.author || "（未读到作者）") : h("b", {}, currentInfo.author || "（未读到作者）")),
         h("p", { class: "muted small-text" }, (currentInfo.caption || "（未读到文案）").slice(0, 160)),
         chips.length ? h("div", { class: "stat-line" }, ...chips) : "");
     } else {
       info.append(h("p", { class: "muted small-text" }, "在左边点开一个视频（进入视频详情页），再点下面的按钮。"));
     }
 
-    const linkInput = h("input", { class: "input field-full", placeholder: "抖音视频链接（可选）", value: d.sourceUrl || (currentInfo && currentInfo.url) || "" });
+    const linkInput = h("input", { class: "input field-full", placeholder: "视频链接（可选，抖音 / B 站 / YouTube）", value: d.sourceUrl || (currentInfo && currentInfo.url) || "" });
     const captionInput = h("textarea", { class: "input field-full", rows: 3, placeholder: "视频文案 / 补充说明（可选，会一起发给 AI）", value: d.manualText || "" });
 
     const analyzeBtn = h("button", { class: "btn primary block lg douyin-analyze-btn", id: "douyin-analyze-btn", onclick: () => runAnalyze(root, "extract") }, "分析当前视频");

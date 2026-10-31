@@ -464,7 +464,7 @@ details.set-details[open] > summary { margin-bottom: 8px; }
 .browser-progress { height: 2px; background: transparent; position: relative; overflow: hidden; }
 .browser-progress.on::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 35%; background: var(--primary); animation: browser-load 1.1s ease-in-out infinite; }
 @keyframes browser-load { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
-.browser-viewport { position: relative; height: calc(100vh - 210px); min-height: 440px; background: var(--surface-2, var(--surface)); }
+.browser-viewport { position: relative; height: calc(100vh - 274px); min-height: 440px; background: var(--surface-2, var(--surface)); }
 .browser-empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 6px; padding: 24px; }
 .browser-empty-title { font-weight: 600; }
 
@@ -614,3 +614,30 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .bgm-line .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bgm-volume { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
 .bgm-volume input[type=range] { flex: 1; }
+
+/* 0.6.9 内嵌浏览器：标签栏、收藏栏 */
+.browser-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0; background: var(--hover); border-bottom: 1px solid var(--line); min-height: 34px; }
+.browser-tabs-list { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.browser-tabs-list::-webkit-scrollbar { display: none; }
+.browser-tab { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 12px; width: 170px; min-width: 90px; flex: 0 1 170px; border-radius: 8px 8px 0 0; color: var(--muted); font-size: 12.5px; cursor: pointer; user-select: none; }
+.browser-tab:hover { background: var(--surface-2, var(--surface)); color: var(--text); }
+.browser-tab.active { background: var(--surface); color: var(--text); box-shadow: 0 -1px 0 var(--line), 1px 0 0 var(--line), -1px 0 0 var(--line); }
+.browser-tab.loading .browser-tab-title { opacity: .7; }
+.browser-tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-tab-x { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 9px; font-size: 14px; line-height: 1; color: var(--muted); }
+.browser-tab-x:hover { background: var(--hover); color: var(--text); }
+.browser-tab-new { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-left: 2px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.browser-tab-new:hover { background: var(--surface); color: var(--text); }
+.browser-tab-new .ico svg { width: 15px; height: 15px; }
+.browser-addr-wrap .browser-btn { width: 24px; height: 24px; margin-right: -6px; }
+.browser-addr-wrap .browser-btn .ico svg { width: 15px; height: 15px; }
+.browser-btn.on { color: #f5a623; }
+.browser-btn.on svg { fill: currentColor; }
+.browser-bookmarks { display: flex; align-items: center; gap: 4px; padding: 4px 8px; min-height: 30px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.browser-bookmarks::-webkit-scrollbar { display: none; }
+.browser-bm { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px 0 9px; flex: none; border: 0; border-radius: 11px; background: transparent; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.browser-bm:hover { background: var(--hover); }
+.browser-bm-x { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 8px; color: var(--muted); visibility: hidden; }
+.browser-bm:hover .browser-bm-x { visibility: visible; }
+.browser-bm-x:hover { background: var(--line); color: var(--text); }
+.small-select { height: 28px; padding: 0 6px; font-size: 12px; width: auto; }

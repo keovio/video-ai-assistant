@@ -257,47 +257,100 @@ function browserUserAgent() {
     : process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
   return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`;
 }
-function ensureEmbeddedView(kind, partition, url) {
-  let st = embeddedViews.get(kind);
-  if (st && !st.view.webContents.isDestroyed()) return st;
-  if (!ViewClass) throw new Error("当前 Electron 版本不支持内嵌视图（WebContentsView / BrowserView 均不可用）");
+// 0.6.9：每类内嵌视图（jimeng=生成网站浏览器，douyin=视频分析浏览器）支持多标签。
+// st.view 永远指向当前标签的视图，其余代码（显示/隐藏/定位/截图/自动化）照旧只认 st.view。
+let tabSeq = 0;
+function createTabView(kind, partition) {
   const view = new ViewClass({
     webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  // 像浏览器一样：站内“新标签页打开”的链接直接在本视图里打开（抖音点视频常是新标签页）
+  // 站内“新标签页打开”的链接：像浏览器一样开一个新标签
   view.webContents.setWindowOpenHandler(({ url: u }) => {
-    if (/^https?:\/\//.test(u)) setImmediate(() => { try { view.webContents.loadURL(u); } catch { /* ignore */ } });
+    if (/^https?:\/\//.test(u)) setImmediate(() => { try { addEmbedTab(kind, u); } catch { /* ignore */ } });
     return { action: "deny" };
   });
-  // 导航状态（地址、标题、能否前进后退、是否在加载）推给页面上的浏览器工具栏
   const push = () => pushEmbedState(kind);
-  // 页面缩放：跨站跳转后 Chromium 会重置，按本视图记住的比例重新套上
+  // 页面缩放：跨站跳转后 Chromium 会重置，按本类视图记住的比例重新套上
   view.webContents.on("did-navigate", () => {
     const cur = embeddedViews.get(kind);
     if (cur && cur.zoom && cur.zoom !== 1) { try { view.webContents.setZoomFactor(cur.zoom); } catch { /* ignore */ } }
   });
-  // 视图里按 Ctrl/Cmd + 加号/减号/0 缩放（焦点在网页里时页面的快捷键收不到）
+  // 视图里的快捷键（焦点在网页里时页面的快捷键收不到）：Ctrl/⌘ + 加号/减号/0 缩放，T 新标签，W 关标签
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || !(input.control || input.meta) || input.alt) return;
-    const k = input.key;
+    const k = String(input.key || "").toLowerCase();
+    if (k === "t") { event.preventDefault(); addEmbedTab(kind); return; }
+    if (k === "w") { event.preventDefault(); const cur = embeddedViews.get(kind); if (cur) closeEmbedTab(kind, cur.activeId); return; }
     const step = k === "=" || k === "+" ? 1 : k === "-" || k === "_" ? -1 : k === "0" ? 0 : null;
     if (step === null) return;
     event.preventDefault();
     setEmbedZoom(kind, step === 0 ? 1 : stepZoom(embedZoom(kind), step));
   });
-  for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-start-loading", "did-stop-loading", "did-fail-load"]) {
+  for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-start-loading", "did-stop-loading", "did-fail-load", "page-favicon-updated"]) {
     view.webContents.on(ev, push);
   }
-  // 还没收到页面上报的位置时先给一个占位尺寸，避免视图以 0 尺寸挂上去看不见；
-  // 页面显示后会立刻按占位元素的位置重算。
   try { view.setBounds({ x: 260, y: 60, width: 640, height: 560 }); } catch { /* ignore */ }
-  // 用不带 Electron/应用名标识的标准 Chrome UA，避免抖音/即梦识别成“非浏览器环境”而拦截或要求用浏览器打开
+  // 用不带 Electron/应用名标识的标准 Chrome UA，避免网站识别成“非浏览器环境”而拦截
   try { view.webContents.setUserAgent(browserUserAgent()); } catch { /* ignore */ }
-  // pageActive：对应页面当前是否在前台。后台任务（如即梦生成）只在页面在前台时才把视图显示出来，
-  // 避免用户切到别的页面后视图突然盖到别的页面上。
-  st = { view, bounds: null, loaded: false, visible: false, pageActive: false, url };
+  return { id: "t" + (++tabSeq), view };
+}
+function ensureEmbeddedView(kind, partition, url) {
+  let st = embeddedViews.get(kind);
+  if (st && st.view && !st.view.webContents.isDestroyed()) return st;
+  if (!ViewClass) throw new Error("当前 Electron 版本不支持内嵌视图（WebContentsView / BrowserView 均不可用）");
+  const tab = createTabView(kind, partition);
+  // pageActive：对应页面当前是否在前台。后台任务（如即梦生成）只在页面在前台时才把视图显示出来。
+  st = { view: tab.view, tabs: [tab], activeId: tab.id, partition, bounds: null, loaded: false, visible: false, pageActive: false, url };
   embeddedViews.set(kind, st);
+  setupEmbedDownloads(kind, tab.view.webContents.session);
   return st;
+}
+function switchEmbedTab(kind, id) {
+  const st = embeddedViews.get(kind);
+  if (!st) return false;
+  const tab = st.tabs.find((t) => t.id === id);
+  if (!tab || tab.view.webContents.isDestroyed()) return false;
+  if (st.activeId === id && st.view === tab.view) return true;
+  const old = st.view;
+  st.view = tab.view;
+  st.activeId = id;
+  if (st.zoom && st.zoom !== 1) { try { tab.view.webContents.setZoomFactor(st.zoom); } catch { /* ignore */ } }
+  if (st.visible) {
+    applyViewBounds(st);
+    attachEmbeddedView(tab.view);
+    if (old && old !== tab.view) detachEmbeddedView(old);
+  }
+  pushEmbedState(kind);
+  return true;
+}
+function addEmbedTab(kind, url) {
+  const cfg = EMBED_CONFIG[kind];
+  if (!cfg) return null;
+  const st = ensureEmbeddedView(kind, cfg[0], cfg[1]);
+  if (st.tabs.length >= 12) { st.view.webContents.loadURL(url || cfg[1]).catch(() => {}); return st.activeId; }
+  const tab = createTabView(kind, st.partition);
+  st.tabs.push(tab);
+  switchEmbedTab(kind, tab.id);
+  tab.view.webContents.loadURL(url || cfg[1]).catch(() => {});
+  st.loaded = true;
+  return tab.id;
+}
+function closeEmbedTab(kind, id) {
+  const st = embeddedViews.get(kind);
+  if (!st) return false;
+  const idx = st.tabs.findIndex((t) => t.id === id);
+  if (idx < 0) return false;
+  if (st.tabs.length === 1) {
+    // 最后一个标签不关，回到主页
+    st.view.webContents.loadURL(EMBED_CONFIG[kind][1]).catch(() => {});
+    return true;
+  }
+  const [tab] = st.tabs.splice(idx, 1);
+  if (st.activeId === id) switchEmbedTab(kind, st.tabs[Math.min(idx, st.tabs.length - 1)].id);
+  detachEmbeddedView(tab.view);
+  try { tab.view.webContents.close(); } catch { /* ignore */ }
+  pushEmbedState(kind);
+  return true;
 }
 const ZOOM_STEPS = [0.5, 0.6, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 function embedZoom(kind) { const st = embeddedViews.get(kind); return (st && st.zoom) || 1; }
@@ -310,40 +363,74 @@ function setEmbedZoom(kind, factor) {
   const z = Math.min(2, Math.max(0.5, Number(factor) || 1));
   if (!st) return z;
   st.zoom = z;
-  try { if (!st.view.webContents.isDestroyed()) st.view.webContents.setZoomFactor(z); } catch { /* ignore */ }
+  for (const t of st.tabs || []) { try { if (!t.view.webContents.isDestroyed()) t.view.webContents.setZoomFactor(z); } catch { /* ignore */ } }
   pushEmbedState(kind);
   return z;
 }
 function embedState(kind) {
   const st = embeddedViews.get(kind);
-  if (!st || st.view.webContents.isDestroyed()) return { kind, opened: false };
+  if (!st || !st.view || st.view.webContents.isDestroyed()) return { kind, opened: false, tabs: [] };
   const wc = st.view.webContents;
   const nav = wc.navigationHistory;
+  const tabs = st.tabs.filter((t) => !t.view.webContents.isDestroyed()).map((t) => ({
+    id: t.id, url: t.view.webContents.getURL(), title: t.view.webContents.getTitle(), loading: t.view.webContents.isLoading(), active: t.id === st.activeId,
+  }));
   return {
     kind, opened: st.loaded || !!wc.getURL(), url: wc.getURL() || st.url, title: wc.getTitle(), loading: wc.isLoading(), zoom: st.zoom || 1,
     canGoBack: nav ? nav.canGoBack() : wc.canGoBack(),
     canGoForward: nav ? nav.canGoForward() : wc.canGoForward(),
+    tabs, activeId: st.activeId,
   };
 }
 function pushEmbedState(kind) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try { mainWindow.webContents.send("video:embed.state", embedState(kind)); } catch { /* ignore */ }
 }
-// 地址栏输入：像网址就打开（补 https://），否则在该站内搜索（抖音）或当作网址
-function normalizeAddress(kind, input) {
+// 地址栏输入：像网址就打开（补 https://），否则在该站内搜索（分析浏览器用抖音搜索）或用百度搜
+function normalizeAddress(kind, input, curUrl = "") {
   const t = String(input || "").trim();
   if (!t) return "";
   if (/^https?:\/\//i.test(t)) return t;
   if (/^[\w-]+(\.[\w-]+)+(\/|$|:|\?)/.test(t)) return "https://" + t;
-  if (kind === "douyin") return "https://www.douyin.com/search/" + encodeURIComponent(t);
+  if (kind === "douyin") {
+    // 分析浏览器：按当前标签所在的平台站内搜索
+    if (/bilibili\.com/.test(curUrl)) return "https://search.bilibili.com/all?keyword=" + encodeURIComponent(t);
+    if (/youtube\.com/.test(curUrl)) return "https://www.youtube.com/results?search_query=" + encodeURIComponent(t);
+    return "https://www.douyin.com/search/" + encodeURIComponent(t);
+  }
   return "https://www.baidu.com/s?wd=" + encodeURIComponent(t);
 }
 const EMBED_CONFIG = { jimeng: ["persist:jimeng", "https://jimeng.jianying.com"], douyin: ["persist:douyin", "https://www.douyin.com"] };
+
+// 0.6.9：生成网站浏览器里下载的视频（即梦/可灵/海螺/Vidu…任何站）自动收进 data/video/inbox，
+// 合成页可挂到某个镜头。即梦自动生成期间（session.__autoCapture）让路给它自己的下载逻辑。
+const EMBED_VIDEO_EXT = /\.(mp4|mov|webm|m4v|mkv)$/i;
+function setupEmbedDownloads(kind, session) {
+  if (kind !== "jimeng" || !session || session.__inboxHooked) return;
+  session.__inboxHooked = true;
+  session.on("will-download", (_e, item) => {
+    if (session.__autoCapture) return;
+    const name = String(item.getFilename() || "video.mp4").replace(/[\\/:*?"<>|]+/g, "_").slice(-120);
+    const mime = String(item.getMimeType() || "");
+    if (!EMBED_VIDEO_EXT.test(name) && !/^video\//.test(mime)) return; // 非视频走系统默认下载
+    const inbox = path.join(videoDir, "inbox");
+    try { fs.mkdirSync(inbox, { recursive: true }); } catch { /* ignore */ }
+    const finalName = `${Date.now()}-${EMBED_VIDEO_EXT.test(name) ? name : name + ".mp4"}`;
+    try { item.setSavePath(path.join(inbox, finalName)); } catch { return; }
+    logger.scope("video").info(`浏览器下载开始：${name}`);
+    item.on("done", (_ev, state) => {
+      if (state === "completed") logger.scope("video").info(`浏览器下载完成：${name}，可在合成导出页挂到镜头`);
+      else { logger.scope("video").warn(`浏览器下载未完成（${state}）：${name}`); try { fs.unlinkSync(path.join(inbox, finalName)); } catch { /* ignore */ } }
+      broadcast("video:downloads.changed", { name: finalName, state });
+    });
+  });
+}
+
 ipcMain.handle("video:embed.nav", async (_e, kind, action, arg) => {
   if (!EMBED_CONFIG[kind]) return { ok: false, error: "未知视图" };
   const st = embeddedViews.get(kind);
   if (action === "state") return { ok: true, state: embedState(kind) };
-  if (!st || st.view.webContents.isDestroyed()) return { ok: false, error: "视图还没打开" };
+  if (!st || !st.view || st.view.webContents.isDestroyed()) return { ok: false, error: "视图还没打开" };
   const wc = st.view.webContents;
   const nav = wc.navigationHistory;
   try {
@@ -352,7 +439,10 @@ ipcMain.handle("video:embed.nav", async (_e, kind, action, arg) => {
     else if (action === "reload") wc.reload();
     else if (action === "stop") wc.stop();
     else if (action === "home") wc.loadURL(EMBED_CONFIG[kind][1]).catch(() => {});
-    else if (action === "go") { const u = normalizeAddress(kind, arg); if (u) wc.loadURL(u).catch(() => {}); }
+    else if (action === "go") { const u = normalizeAddress(kind, arg, wc.getURL()); if (u) wc.loadURL(u).catch(() => {}); }
+    else if (action === "newTab") { const u = arg ? normalizeAddress(kind, arg, wc.getURL()) : ""; addEmbedTab(kind, u || undefined); }
+    else if (action === "switchTab") switchEmbedTab(kind, String(arg || ""));
+    else if (action === "closeTab") closeEmbedTab(kind, String(arg || st.activeId));
     else if (action === "zoom") setEmbedZoom(kind, arg);
     else if (action === "zoomIn") setEmbedZoom(kind, stepZoom(embedZoom(kind), 1));
     else if (action === "zoomOut") setEmbedZoom(kind, stepZoom(embedZoom(kind), -1));
@@ -396,6 +486,15 @@ function setEmbeddedViewBounds(kind, rect) {
 // （webContents + session + show/focus），但背后是内嵌视图，不是独立窗口。
 function embeddedSurface(kind, partition, url) {
   const st = ensureEmbeddedView(kind, partition, url);
+  // 0.6.9 多标签：即梦自动生成要在即梦标签里跑——当前标签不是即梦就切到已有的即梦标签，没有就新开一个
+  if (kind === "jimeng") {
+    const isJimeng = (t) => /jianying\.com/.test(t.view.webContents.getURL() || "");
+    const cur = st.tabs.find((t) => t.id === st.activeId);
+    if (cur && !isJimeng(cur)) {
+      const hit = st.tabs.find(isJimeng);
+      if (hit) switchEmbedTab(kind, hit.id); else addEmbedTab(kind, url);
+    }
+  }
   return {
     webContents: st.view.webContents,
     session: st.view.webContents.session,
@@ -442,7 +541,7 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
     if (seekPlan) await seek(seekPlan.points[i]);
     else if (i > 0) await new Promise((r) => setTimeout(r, Math.max(200, Math.min(5000, Number(intervalMs) || 1500))));
     try {
-      let img = await withTimeout(st.view.webContents.capturePage(), 5000, "截图");
+      let img = await withTimeout(wc.capturePage(), 5000, "截图");
       if (!img || img.isEmpty()) continue;
       const size = img.getSize();
       if (size.width > 540) img = img.resize({ width: 540 });

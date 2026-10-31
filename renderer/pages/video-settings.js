@@ -153,7 +153,7 @@
         box.append(
           row("接口地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("aiBaseUrl", "https://api.openai.com/v1"), { stack: true }),
           row("模型", "保存 Key 后点“获取列表”从服务里选，也可以手填；支持看图的模型（如 gpt-4o-mini、qwen-vl-plus）会结合视频画面分析", pickerInput("aiModel", "如 gpt-4o-mini", models("ai"))),
-          keyRow("AI Key", "粘贴 AI 服务的 API Key（抖音分析用）", () => api.video.ai.status(), (v) => api.video.ai.setKey(v)));
+          keyRow("AI Key", "粘贴 AI 服务的 API Key（视频分析用）", () => api.video.ai.status(), (v) => api.video.ai.setKey(v)));
       },
     });
 

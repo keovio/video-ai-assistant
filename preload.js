@@ -88,6 +88,13 @@ contextBridge.exposeInMainWorld("app", {
       clearVideo: (id) => ipcRenderer.invoke("video:shots.clearVideo", id),
     },
     assets: { list: (filter) => ipcRenderer.invoke("video:assets.list", filter) },
+    downloads: {
+      list: () => ipcRenderer.invoke("video:downloads.list"),
+      attach: (name, shotId) => ipcRenderer.invoke("video:downloads.attach", name, shotId),
+      remove: (name) => ipcRenderer.invoke("video:downloads.remove", name),
+      openFolder: () => ipcRenderer.invoke("video:downloads.openFolder"),
+      onChanged: on("video:downloads.changed"),
+    },
     renders: {
       list: (projectId) => ipcRenderer.invoke("video:renders.list", projectId),
       start: (projectId, opts) => ipcRenderer.invoke("video:renders.start", projectId, opts),
