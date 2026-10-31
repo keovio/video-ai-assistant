@@ -1,21 +1,15 @@
 "use strict";
-// 合成导出页（M3：ffmpeg 状态、每镜音画状态、开始合成、失败重跑、
-// 打开输出文件夹 / 用系统播放器打开成片。即梦片段生成与导入也在此页；
-// M4 起即梦不再弹独立窗口，嵌在左侧的内嵌视图里，自动操作失败时视图
-// 保持可见供用户手动完成，再用“导入片段”导进来）。
+// 合成导出页：左边是即梦内嵌浏览器（进页面自动打开，登录一次后保持），
+// 右边是操作面板：合成（开始/进度/烧字幕开关）→ 最近成片（打开/文件夹/重跑/提示）→ 每镜素材（配音与画面状态、
+// 即梦生成 / 导入 / 清除片段）。即梦自动操作失败时视图保持在左边，可手动生成下载后用“导入”导进来。
 (function () {
-  const { h, card, modules } = window.Shell;
+  const { h } = window.Shell;
   const api = window.app;
   const fmt = (s) => (Math.round(Number(s || 0) * 10) / 10) + " 秒";
+  const STATUS = { queued: ["排队中", ""], running: ["合成中", "warn"], done: ["已完成", "ok"], failed: ["失败", "err"] };
   let pollTimer = null;
   let currentId = null;
-  let jimengOpened = false;
-  // 即梦视图位置同步：滚动、日志面板开合、窗口缩放、对话框弹出时都跟着走（见 embed-sync.js）
-  const jimengSync = window.EmbedSync.attach({
-    pageId: "render", placeholderId: "jimeng-view-placeholder",
-    api: { setBounds: (r) => api.video.jimeng.setBounds(r), show: () => api.video.jimeng.show(), hide: () => api.video.jimeng.hide() },
-    isOpen: () => jimengOpened,
-  });
+  let browser = null;
 
   async function unwrap(r) {
     if (!r || !r.ok) throw new Error((r && r.error) || "操作失败");
@@ -29,79 +23,134 @@
     order: 25,
     render(root) {
       root.classList.add("page-wide");
-      root._body = h("div", { id: "render-body" });
-      root.append(root._body);
+      browser = window.EmbedBrowser.create({
+        kind: "jimeng", pageId: "render", title: "即梦", api: api.video.jimeng,
+        emptyText: "首次使用请在这里登录即梦，之后会保持登录。",
+      });
+      root._head = h("header", { class: "page-head compact" });
+      root._side = h("div", { class: "workbench-side", id: "render-body" });
+      root.append(root._head, h("div", { class: "workbench" }, browser.el, root._side));
       currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
-      load(root).catch((e) => window.Shell.toast(e.message, "error"));
     },
     async onShow(root) {
       currentId = window.VideoApp ? window.VideoApp.currentProjectId() : null;
-      if (root._body) load(root).catch((e) => window.Shell.toast(e.message, "error"));
-      jimengSync.refresh();
+      if (browser) browser.show();
+      load(root).catch((e) => window.Shell.toast(e.message, "error"));
     },
     async onHide() {
       stopPoll();
-      jimengSync.hidden();
-      try { await api.video.jimeng.hide(); } catch { /* ignore */ }
+      if (browser) browser.hide();
     },
   });
 
   function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
+  function head(root, title, sub) {
+    root._head.replaceChildren(h("div", {}, h("h1", {}, title), h("p", { class: "sub" }, sub)));
+  }
+
   async function load(root) {
     stopPoll();
-    const body = root._body || root;
+    const side = root._side;
     if (!currentId) {
-      body.textContent = "";
-      body.append(h("header", { class: "page-head" },
-        h("div", {}, h("h1", {}, "合成导出"), h("p", { class: "sub" }, "先在“项目”页打开一个项目，再回来合成。"))),
-        h("button", { class: "btn primary", onclick: () => window.Shell.navigate("projects") }, "去项目列表"));
+      head(root, "合成导出", "先在“项目”页打开一个项目，再回来合成。");
+      side.replaceChildren(h("section", { class: "side-card" },
+        h("h3", {}, "还没有打开项目"),
+        h("p", { class: "muted small-text" }, "左边的即梦可以先登录好；合成需要先选一个项目。"),
+        h("button", { class: "btn primary block", onclick: () => window.Shell.navigate("projects") }, "去项目列表")));
       return;
     }
     let data;
     try { data = await unwrap(await api.video.projects.get(currentId)); }
-    catch (e) { body.textContent = ""; body.append(h("p", {}, "加载失败：" + e.message)); return; }
+    catch (e) { side.replaceChildren(h("p", { class: "error" }, "加载失败：" + e.message)); return; }
     const ff = await api.video.ffmpeg.status().catch(() => ({ ok: false, warning: "检测失败" }));
     const renders = await api.video.renders.list(currentId).catch(() => ({ renders: [] }));
     const list = renders.renders || [];
     const latest = list[0] || null;
     const running = list.some((r) => r.status === "queued" || r.status === "running");
-    const burnInput = h("input", { type: "checkbox", checked: true });
+    const shots = data.shots || [];
+    const voiced = shots.filter((s) => s.audioAssetId).length;
+    const withClip = shots.filter((s) => s.videoAssetId).length;
 
-    // ---- 左栏：即梦内嵌视图 + 镜头列表 ----
-    const jimengPlaceholder = h("div", { id: "jimeng-view-placeholder", class: "embed-placeholder" },
-      h("p", { class: "muted" }, "点“打开即梦”后，即梦页面会嵌在这里显示（登录一次后保持登录）。"),
-      h("p", { class: "muted small" }, "自动操作失败时视图保持可见，在里面手动生成并下载，再用下面对应镜头的“导入片段”导进来。"));
-    const jimengBtn = h("button", { class: "btn", onclick: async () => {
-      jimengBtn.disabled = true;
+    head(root, data.project.title || "合成导出", `${shots.length} 个镜头 · 约 ${fmt(data.project.totalSeconds)} · ${data.project.aspect}`);
+
+    // ---- 合成 ----
+    const burnInput = h("input", { type: "checkbox", role: "switch", checked: latest ? latest.burnSubtitles !== false : true });
+    const startBtn = h("button", { class: "btn primary block lg", disabled: running || !ff.ok, onclick: async () => {
+      startBtn.disabled = true;
       try {
-        const r = await api.video.jimeng.open();
-        if (!r.ok) window.Shell.toast(r.error || "打开即梦失败", "error");
-        else { jimengOpened = true; window.Shell.toast("即梦已在左侧打开（登录一次后保持登录）", "success"); }
-        jimengSync.refresh();
-      } catch (e) { window.Shell.toast(e.message, "error"); }
-      finally { jimengBtn.disabled = false; }
-    } }, "打开即梦");
-    const jimengCard = card({ title: "即梦（内嵌）", icon: "film" },
-      h("div", { class: "actions" }, jimengBtn),
-      jimengPlaceholder);
+        const r = await api.video.renders.start(currentId, { burnSubtitles: burnInput.checked });
+        if (!r.ok) window.Shell.toast(r.error || "开始合成失败", "error");
+        await load(root);
+      } catch (e) { window.Shell.toast(e.message, "error"); startBtn.disabled = false; }
+    } }, running ? "合成中…" : "开始合成");
+    const progressBar = h("div", {});
+    const progressText = h("p", { class: "muted small-text" });
+    const progress = h("div", { hidden: !running }, h("div", { class: "render-progress" }, progressBar), progressText);
+    const drawProgress = (r) => {
+      if (!r) return;
+      progressBar.style.width = Math.max(2, Math.min(100, Number(r.pct) || 0)) + "%";
+      progressText.textContent = `${r.message || "处理中"} · ${Number(r.pct) || 0}%`;
+    };
+    if (running) drawProgress(list.find((r) => r.status === "queued" || r.status === "running"));
 
-    const shotsBox = h("div", {});
-    data.shots.forEach((s, i) => {
-      const videoText = s.videoAssetId
-        ? `画面：片段已挂（${s.clipSeconds ? fmt(s.clipSeconds) : "时长未知"}）`
-        : s.error ? `画面：失败（${s.error}）` : "画面：暂无片段（合成时该镜用黑场兜底，配音保留）";
-      const audioText = s.audioAssetId ? `配音：已挂（${fmt(s.audioSeconds)}）` : "配音：暂无";
-      const genBtn = h("button", { class: "btn small", onclick: async () => {
+    const readiness = h("div", { class: "stat-line" },
+      h("span", { class: "chip " + (voiced === shots.length && shots.length ? "ok" : "warn") }, `配音 ${voiced}/${shots.length}`),
+      h("span", { class: "chip " + (withClip === shots.length && shots.length ? "ok" : "") }, `画面 ${withClip}/${shots.length}`),
+      h("span", { class: "chip " + (ff.ok ? "ok" : "err") }, ff.ok ? "ffmpeg 可用" : "缺少 ffmpeg"));
+    const renderCard = h("section", { class: "side-card" },
+      h("h3", {}, "合成"),
+      readiness,
+      ff.ok ? "" : h("div", { class: "hint-bar warn" }, h("span", { class: "grow" }, ff.warning || "合成前请先安装 ffmpeg"),
+        h("button", { class: "btn small", onclick: () => (window.Shell.openSettings ? window.Shell.openSettings("video-system") : window.Shell.navigate("settings")) }, "查看")),
+      h("label", { class: "switch-line" }, h("span", {}, "烧入字幕"), h("span", { class: "switch" }, burnInput, h("span", { class: "slider" }))),
+      startBtn,
+      progress,
+      h("p", { class: "muted small-text" }, "没有画面的镜头用黑场，没有配音的用静音，都不会丢；烧字幕失败时只输出 SRT。"));
+
+    // ---- 最近成片 ----
+    let latestCard = null;
+    if (latest) {
+      const [label, cls] = STATUS[latest.status] || [latest.status, ""];
+      const hasOut = !!latest.outputPath && latest.status === "done";
+      latestCard = h("section", { class: "side-card" },
+        h("h3", {}, h("span", { class: "grow" }, "最近成片"), h("span", { class: "chip " + cls }, label)),
+        latest.status === "failed" ? h("p", { class: "error small-text" }, latest.error || latest.message || "合成失败") : "",
+        hasOut ? h("p", { class: "muted small-text" }, latest.outputPath.split("/").pop() + (latest.srtPath ? " · 附 SRT 字幕" : "")) : "",
+        ...(latest.warnings || []).slice(0, 4).map((w) => h("p", { class: "muted small-text" }, "· " + w)),
+        h("div", { class: "actions" },
+          hasOut ? h("button", { class: "btn primary", onclick: async () => {
+            const r = await api.video.renders.openOutput(latest.id);
+            if (!r.ok) window.Shell.toast(r.error || "打开失败", "error");
+          } }, "播放成片") : "",
+          hasOut ? h("button", { class: "btn", onclick: async () => {
+            const r = await api.video.renders.openFolder(latest.id);
+            if (!r.ok) window.Shell.toast(r.error || "打开失败", "error");
+          } }, "打开文件夹") : "",
+          latest.status === "failed" ? h("button", { class: "btn", disabled: running, onclick: async () => {
+            const r = await api.video.renders.retry(latest.id);
+            if (!r.ok) window.Shell.toast(r.error || "重跑失败", "error");
+            else await load(root);
+          } }, "重跑") : ""));
+    }
+
+    // ---- 每镜素材 ----
+    const clipList = h("div", { class: "clip-list" });
+    shots.forEach((s, i) => {
+      const audioChip = s.audioAssetId ? h("span", { class: "chip ok" }, "配音 " + fmt(s.audioSeconds)) : h("span", { class: "chip warn" }, "无配音");
+      const videoChip = s.videoAssetId
+        ? h("span", { class: "chip ok" }, "片段" + (s.clipSeconds ? " " + fmt(s.clipSeconds) : ""))
+        : s.error ? h("span", { class: "chip err", title: s.error }, "生成失败") : h("span", { class: "chip" }, "黑场");
+      const genBtn = h("button", { class: "btn small", title: "用这镜的生视频提示词在左边即梦里生成并自动下载", onclick: async () => {
         genBtn.disabled = true; genBtn.textContent = "生成中…";
         try {
           const r = await api.video.shots.generateClip(s.id);
-          if (!r.ok) window.Shell.toast(r.manual ? "自动操作已转手动：" + r.error : (r.error || "生成片段失败"), "error");
-          else window.Shell.toast("片段已生成并挂到该镜头", "success");
+          if (!r.ok) window.Shell.toast(r.manual ? "转手动：" + r.error : (r.error || "生成片段失败"), "error");
+          else window.Shell.toast(`第 ${i + 1} 镜片段已挂上`, "success");
           await load(root);
         } catch (e) { window.Shell.toast(e.message, "error"); }
-        finally { genBtn.disabled = false; genBtn.textContent = "即梦生成片段"; }
-      } }, "即梦生成片段");
+        finally { genBtn.disabled = false; genBtn.textContent = "即梦生成"; }
+      } }, "即梦生成");
       const importInput = h("input", { type: "file", accept: ".mp4,.mov,.webm,.mkv,.m4v,video/*", hidden: true,
         onchange: async () => {
           const f = importInput.files && importInput.files[0]; if (!f) return;
@@ -109,82 +158,44 @@
             const d = await f.arrayBuffer();
             const r = await api.video.shots.importVideo(s.id, { name: f.name, data: d });
             if (!r.ok) window.Shell.toast(r.error || "导入片段失败", "error");
-            else window.Shell.toast("片段已导入", "success");
+            else window.Shell.toast(`第 ${i + 1} 镜片段已导入`, "success");
             await load(root);
           } catch (e) { window.Shell.toast(e.message, "error"); }
           importInput.value = "";
         } });
-      const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入片段");
-      const clearBtn = h("button", { class: "btn small danger-ghost", disabled: !s.videoAssetId, onclick: async () => {
+      const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入");
+      const clearBtn = s.videoAssetId ? h("button", { class: "btn small ghost", onclick: async () => {
         const r = await api.video.shots.clearVideo(s.id);
-        if (r.ok) { window.Shell.toast("已清除该镜头片段"); await load(root); }
+        if (r.ok) await load(root);
         else window.Shell.toast(r.error || "清除失败", "error");
-      } }, "清除片段");
-      shotsBox.append(h("section", { class: "card module shot-row" },
-        h("header", { class: "card-head" }, h("h2", {}, `第 ${i + 1} 镜`), h("span", { class: "card-tag" }, `${fmt(s.start)} – ${fmt(s.end)}`)),
-        h("p", { class: "muted" }, "", (s.narration || "").slice(0, 120)),
-        h("p", { class: "muted" }, "", audioText + "；" + videoText),
+      } }, "清除") : "";
+      clipList.append(h("div", { class: "clip-row shot-row" },
+        h("div", { class: "clip-row-head" },
+          h("b", {}, `#${i + 1}`), h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`), audioChip, videoChip),
+        h("div", { class: "clip-row-text", title: s.narration || "" }, s.narration || "（没有口播）"),
         h("div", { class: "actions" }, genBtn, importBtn, clearBtn, importInput)));
     });
-    const shotsCard = card({ title: "镜头与片段", icon: "film" }, shotsBox);
+    const shotsCard = h("section", { class: "side-card" },
+      h("h3", {}, h("span", { class: "grow" }, "每镜画面"),
+        h("button", { class: "btn small ghost", onclick: () => window.Shell.navigate("editor") }, "改分镜")),
+      shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 
-    // ---- 右栏：合成控制 + 最近一次合成 ----
-    const startBtn = h("button", { class: "btn primary", disabled: running || !ff.ok, onclick: async () => {
-      startBtn.disabled = true;
-      try {
-        const r = await api.video.renders.start(currentId, { burnSubtitles: burnInput.checked });
-        if (!r.ok) window.Shell.toast(r.error || "开始合成失败", "error");
-        else window.Shell.toast("合成任务已开始，页面会轮询进度", "success");
-        await load(root);
-      } catch (e) { window.Shell.toast(e.message, "error"); startBtn.disabled = false; }
-    } }, running ? "合成进行中…" : "开始合成");
-    const retryBtn = h("button", { class: "btn", disabled: !latest || running, onclick: async () => {
-      if (!latest) return;
-      const r = await api.video.renders.retry(latest.id);
-      if (!r.ok) window.Shell.toast(r.error || "重跑失败", "error");
-      else { window.Shell.toast("已重新开始合成"); await load(root); }
-    } }, "失败重跑");
-    const folderBtn = h("button", { class: "btn", disabled: !latest || !latest.outputPath, onclick: async () => {
-      const r = await api.video.renders.openFolder(latest.id);
-      if (!r.ok) window.Shell.toast(r.error || "打开失败", "error");
-    } }, "打开输出文件夹");
-    const playBtn = h("button", { class: "btn", disabled: !latest || !latest.outputPath, onclick: async () => {
-      const r = await api.video.renders.openOutput(latest.id);
-      if (!r.ok) window.Shell.toast(r.error || "打开失败", "error");
-    } }, "用系统播放器打开成片");
-
-    const controlsCard = card({ title: "合成", icon: "film" },
-      h("p", {}, data.project.title),
-      h("p", { class: "muted" }, "", `共 ${data.shots.length} 个镜头 · 总时长 ${fmt(data.project.totalSeconds)} · 比例 ${data.project.aspect}`),
-      h("p", { class: "muted" }, "", ff.ok ? "系统 ffmpeg/ffprobe：可用" : "系统 ffmpeg/ffprobe：" + (ff.warning || "不可用，合成前请先安装")),
-      h("div", { class: "actions" }, startBtn, retryBtn, folderBtn, playBtn),
-      h("label", { class: "muted" }, "烧入字幕（默认开；烧入失败时自动改为仅输出 SRT，页面会如实提示）", burnInput));
-
-    const latestCard = latest ? card({ title: "最近一次合成", icon: "film" },
-      h("p", {}, `状态：${latest.status} · ${latest.message || ""}`),
-      h("p", { class: "muted" }, "", latest.outputPath ? `成片：${latest.outputPath}` : "暂无成片"),
-      h("p", { class: "muted" }, "", latest.srtPath ? `字幕：${latest.srtPath}` : ""),
-      ...(latest.warnings || []).map((w) => h("p", { class: "muted" }, "", "注意：" + w)),
-      h("p", { class: "muted" }, "", `进度：${latest.pct}%`)) : null;
-
-    body.textContent = "";
-    body.append(
-      h("header", { class: "page-head" },
-        h("div", {}, h("h1", {}, "合成导出"),
-          h("p", { class: "sub" }, "合成前请确认每镜都有配音；无画面的镜头会用黑场兜底，配音不会丢。"))),
-      h("div", { class: "split-layout render-layout" },
-        h("div", { class: "split-left" }, modules(jimengCard), modules(shotsCard)),
-        h("div", { class: "split-right" }, modules(controlsCard), latestCard ? modules(latestCard) : h("p", { class: "muted" }, "暂无合成记录"))));
-
-    requestAnimationFrame(() => jimengSync.refresh());
+    side.replaceChildren(renderCard, ...(latestCard ? [latestCard] : []), shotsCard);
+    browser.refresh();
 
     if (running) {
-      stopPoll();
       pollTimer = setInterval(async () => {
         const r = await api.video.renders.list(currentId).catch(() => ({ renders: [] }));
-        const still = (r.renders || []).some((x) => x.status === "queued" || x.status === "running");
-        if (!still) await load(root);
-      }, 2000);
+        const cur = (r.renders || []).find((x) => x.status === "queued" || x.status === "running");
+        if (cur) drawProgress(cur);
+        else {
+          stopPoll();
+          const done = (r.renders || [])[0];
+          if (done && done.status === "done") window.Shell.toast("成片已合成", "success");
+          else if (done && done.status === "failed") window.Shell.toast("合成失败：" + (done.error || done.message || ""), "error");
+          await load(root);
+        }
+      }, 1500);
     }
   }
 })();

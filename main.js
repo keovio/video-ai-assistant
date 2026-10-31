@@ -256,10 +256,16 @@ function ensureEmbeddedView(kind, partition, url) {
   const view = new ViewClass({
     webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  // 像浏览器一样：站内“新标签页打开”的链接直接在本视图里打开（抖音点视频常是新标签页）
   view.webContents.setWindowOpenHandler(({ url: u }) => {
-    if (/^https:\/\//.test(u)) shell.openExternal(u);
+    if (/^https?:\/\//.test(u)) setImmediate(() => { try { view.webContents.loadURL(u); } catch { /* ignore */ } });
     return { action: "deny" };
   });
+  // 导航状态（地址、标题、能否前进后退、是否在加载）推给页面上的浏览器工具栏
+  const push = () => pushEmbedState(kind);
+  for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-start-loading", "did-stop-loading", "did-fail-load"]) {
+    view.webContents.on(ev, push);
+  }
   // 还没收到页面上报的位置时先给一个占位尺寸，避免视图以 0 尺寸挂上去看不见；
   // 页面显示后会立刻按占位元素的位置重算。
   try { view.setBounds({ x: 260, y: 60, width: 640, height: 560 }); } catch { /* ignore */ }
@@ -271,9 +277,57 @@ function ensureEmbeddedView(kind, partition, url) {
   embeddedViews.set(kind, st);
   return st;
 }
+function embedState(kind) {
+  const st = embeddedViews.get(kind);
+  if (!st || st.view.webContents.isDestroyed()) return { kind, opened: false };
+  const wc = st.view.webContents;
+  const nav = wc.navigationHistory;
+  return {
+    kind, opened: st.loaded || !!wc.getURL(), url: wc.getURL() || st.url, title: wc.getTitle(), loading: wc.isLoading(),
+    canGoBack: nav ? nav.canGoBack() : wc.canGoBack(),
+    canGoForward: nav ? nav.canGoForward() : wc.canGoForward(),
+  };
+}
+function pushEmbedState(kind) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.webContents.send("video:embed.state", embedState(kind)); } catch { /* ignore */ }
+}
+// 地址栏输入：像网址就打开（补 https://），否则在该站内搜索（抖音）或当作网址
+function normalizeAddress(kind, input) {
+  const t = String(input || "").trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^[\w-]+(\.[\w-]+)+(\/|$|:|\?)/.test(t)) return "https://" + t;
+  if (kind === "douyin") return "https://www.douyin.com/search/" + encodeURIComponent(t);
+  return "https://www.baidu.com/s?wd=" + encodeURIComponent(t);
+}
+const EMBED_CONFIG = { jimeng: ["persist:jimeng", "https://jimeng.jianying.com"], douyin: ["persist:douyin", "https://www.douyin.com"] };
+ipcMain.handle("video:embed.nav", async (_e, kind, action, arg) => {
+  if (!EMBED_CONFIG[kind]) return { ok: false, error: "未知视图" };
+  const st = embeddedViews.get(kind);
+  if (action === "state") return { ok: true, state: embedState(kind) };
+  if (!st || st.view.webContents.isDestroyed()) return { ok: false, error: "视图还没打开" };
+  const wc = st.view.webContents;
+  const nav = wc.navigationHistory;
+  try {
+    if (action === "back") { if (nav ? nav.canGoBack() : wc.canGoBack()) (nav ? nav.goBack() : wc.goBack()); }
+    else if (action === "forward") { if (nav ? nav.canGoForward() : wc.canGoForward()) (nav ? nav.goForward() : wc.goForward()); }
+    else if (action === "reload") wc.reload();
+    else if (action === "stop") wc.stop();
+    else if (action === "home") wc.loadURL(EMBED_CONFIG[kind][1]).catch(() => {});
+    else if (action === "go") { const u = normalizeAddress(kind, arg); if (u) wc.loadURL(u).catch(() => {}); }
+    else if (action === "external") { const u = wc.getURL(); if (/^https?:\/\//.test(u)) shell.openExternal(u); }
+    else return { ok: false, error: "未知操作" };
+  } catch (err) { return { ok: false, error: (err && err.message) || String(err) }; }
+  return { ok: true, state: embedState(kind) };
+});
+
 function showEmbeddedView(kind) {
   const st = embeddedViews.get(kind);
   if (!st) return false;
+  // 页面还没报过位置时先不挂（否则会先在默认位置闪一下），等 setBounds 到了再挂
+  if (!st.bounds) { st.wantShow = true; return true; }
+  st.wantShow = false;
   applyViewBounds(st);
   if (!attachEmbeddedView(st.view)) return false;
   st.visible = true;
@@ -281,7 +335,7 @@ function showEmbeddedView(kind) {
 }
 function hideEmbeddedView(kind) {
   const st = embeddedViews.get(kind);
-  if (st) st.pageActive = false;
+  if (st) { st.pageActive = false; st.wantShow = false; }
   if (!st || !st.visible) return;
   detachEmbeddedView(st.view);
   st.visible = false;
@@ -295,6 +349,7 @@ function setEmbeddedViewBounds(kind, rect) {
   if (b.width <= 0 || b.height <= 0) return false;
   st.bounds = b;
   if (st.visible) applyViewBounds(st);
+  else if (st.wantShow) showEmbeddedView(kind);
   return true;
 }
 // 某类视图的“操作面”：给 video-ipc 用，形状与旧的 jimengWindow 保持兼容

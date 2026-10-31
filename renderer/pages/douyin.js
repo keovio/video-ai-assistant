@@ -13,13 +13,9 @@
   };
   const STYLE_KEYS = Object.keys(STYLE_LABELS);
 
-  let viewOpened = false;
-  // 抖音视图位置同步：滚动、日志面板开合、窗口缩放、对话框弹出时都跟着走（见 embed-sync.js）
-  const douyinSync = window.EmbedSync.attach({
-    pageId: "douyin", placeholderId: "douyin-view-placeholder",
-    api: { setBounds: (r) => api.video.douyin.setBounds(r), show: () => api.video.douyin.show(), hide: () => api.video.douyin.hide() },
-    isOpen: () => viewOpened,
-  });
+  // 左侧内嵌浏览器（进页面自动打开抖音，登录一次后保持），见 embed-browser.js
+  let browser = null;
+  const viewOpened = () => !!(browser && browser.isOpen());
   let aiReady = false;
   let currentInfo = null; // 提取到的视频信息（或 null）
   let draft = null; // 当前分析草稿（与存储记录同形），未分析时为 null
@@ -55,13 +51,12 @@
       refreshSavedList(root).catch(() => {});
     },
     async onShow(root) {
-      douyinSync.refresh();
+      if (browser) browser.show();
       refreshAiStatus(root).catch(() => {});
       refreshSavedList(root).catch(() => {});
     },
     async onHide() {
-      douyinSync.hidden();
-      try { await api.video.douyin.hide(); } catch { /* ignore */ }
+      if (browser) browser.hide();
     },
   });
 
@@ -69,42 +64,20 @@
     const body = root._body;
     body.textContent = "";
 
-    const placeholder = h("div", { id: "douyin-view-placeholder", class: "embed-placeholder" },
-      h("p", { class: "muted" }, "点“打开抖音”后，抖音页面会嵌在这里显示（登录一次后保持登录）。"),
-      h("p", { class: "muted small" }, "选择器未经真机验证：如果打开视频后读不到信息，请用右侧手动粘贴链接和文案。"));
-    const openBtn = h("button", { class: "btn primary", onclick: async () => {
-      openBtn.disabled = true;
-      try {
-        const r = await api.video.douyin.open();
-        if (!r.ok) window.Shell.toast(r.error || "打开抖音失败", "error");
-        else { viewOpened = true; window.Shell.toast("抖音已在左侧打开", "success"); }
-        douyinSync.refresh();
-      } catch (e) { window.Shell.toast(e.message, "error"); }
-      finally { openBtn.disabled = false; }
-    } }, "打开抖音");
-    const hideBtn = h("button", { class: "btn", onclick: async () => {
-      viewOpened = false;
-      douyinSync.hidden();
-      await api.video.douyin.hide().catch(() => {});
-      window.Shell.toast("已隐藏抖音视图（登录态保留，再打开时不用重新登录）");
-    } }, "隐藏视图");
-
-    // 右侧面板：手动信息 + 当前视频 + 分析结果，全部由 renderPanel 重绘
-    const panel = h("div", { id: "douyin-panel" });
+    browser = window.EmbedBrowser.create({
+      kind: "douyin", pageId: "douyin", title: "抖音", api: api.video.douyin,
+      emptyText: "首次使用请在这里登录抖音，之后会保持登录。",
+    });
+    // 右侧面板：当前视频 + 分析结果 + 已保存的分析，全部由 renderPanel 重绘
+    const panel = h("div", { id: "douyin-panel", class: "workbench-side" });
 
     body.append(
-      h("header", { class: "page-head" },
+      h("header", { class: "page-head compact" },
         h("div", {}, h("h1", {}, "抖音分析"),
-          h("p", { class: "sub" }, "在左侧刷抖音、点开一个视频，右侧点“分析当前视频”；也可以手动粘贴链接和文案分析。"))),
-      h("div", { class: "split-layout douyin-layout" },
-        h("div", { class: "split-left" },
-          h("div", { class: "actions" }, openBtn, hideBtn),
-          placeholder),
-        h("div", { class: "split-right" }, panel)));
+          h("p", { class: "sub" }, "在左边刷抖音、点开一个视频，然后点右边的“分析当前视频”。"))),
+      h("div", { class: "workbench" }, browser.el, panel));
     root._panel = panel;
-    root._placeholder = placeholder;
     renderPanel(root);
-    requestAnimationFrame(() => douyinSync.refresh());
   }
 
   async function refreshAiStatus(root) {
@@ -114,41 +87,47 @@
       const r = await api.video.ai.status();
       aiReady = !!(r && r.set);
       if (hint) {
-        hint.textContent = aiReady
-          ? `AI 已配置（Key 末 4 位 …${r.last4 || ""}）${r.insecureFallback ? "，注意：本机无可用钥匙串，Key 以文件形式保存，未加密" : ""}`
-          : "未配置 AI Key：请先到“设置 → 视频 → AI 分析”里保存 Key，才能分析；未配置时只能看提取到的视频信息和手动粘贴。";
+        hint.className = "hint-bar " + (aiReady ? "ok" : "warn");
+        hint.replaceChildren(
+          h("span", { class: "grow" }, aiReady
+            ? `AI 已就绪（Key …${r.last4 || ""}）${r.insecureFallback ? "，Key 未加密保存" : ""}`
+            : "还没配置 AI Key，配好后才能分析"),
+          aiReady ? "" : h("button", { class: "btn small", onclick: () => (window.Shell.openSettings ? window.Shell.openSettings("video-ai") : window.Shell.navigate("settings")) }, "去设置"));
       }
     } catch {
       aiReady = false;
-      if (hint) hint.textContent = "AI 设置读取失败，请到设置页检查。";
+      if (hint) { hint.className = "hint-bar warn"; hint.textContent = "AI 设置读取失败，请到设置页检查。"; }
     }
     for (const b of btns) b.disabled = busy || !aiReady;
   }
 
+  let savedSeq = 0;
   async function refreshSavedList(root) {
     const box = root.querySelector("#douyin-saved-list");
     if (!box) return;
-    box.textContent = "";
+    const seq = ++savedSeq; // 并发刷新时只让最后一次落地，避免列表重复
     let r;
     try { r = await unwrap(await api.video.analyses.list()); }
-    catch (e) { box.append(h("p", { class: "error" }, e.message)); return; }
+    catch (e) { if (seq === savedSeq) box.replaceChildren(h("p", { class: "error" }, e.message)); return; }
+    if (seq !== savedSeq || !box.isConnected) return;
+    box.textContent = "";
     if (!r.analyses.length) {
-      box.append(h("p", { class: "muted" }, "还没有保存的分析。分析后点“保存分析”，会留在这里。"));
+      box.append(h("p", { class: "muted small-text" }, "还没有保存的分析。分析后点“保存分析”，会留在这里。"));
       return;
     }
     for (const a of r.analyses) {
       const when = a.createdAt ? new Date(a.createdAt).toLocaleString() : "";
-      box.append(h("div", { class: "actions saved-row" },
-        h("div", { class: "saved-row-main" },
-          h("b", {}, a.scriptTitle || "未命名分析"),
-          h("div", { class: "muted" }, `${a.author || "未知作者"}${when ? " · " + when : ""}${a.sourceUrl ? " · " + a.sourceUrl.slice(0, 60) : ""}`)),
+      box.append(h("div", { class: "clip-row saved-row" },
+        h("div", { class: "clip-row-head" },
+          h("b", { class: "grow" }, a.scriptTitle || "未命名分析"),
         h("button", { class: "btn small", onclick: () => loadSaved(root, a.id) }, "打开"),
         h("button", { class: "btn small danger-ghost", onclick: async () => {
           if (!await window.Shell.confirm(`确定删除这条分析“${a.scriptTitle || "未命名分析"}”吗？`)) return;
           const res = await api.video.analyses.remove(a.id);
           if (res.ok) { window.Shell.toast("已删除"); await refreshSavedList(root); }
           else window.Shell.toast(res.error || "删除失败", "error");
-        } }, "删除")));
+        } }, "删除")),
+        h("div", { class: "clip-row-text" }, `${a.author || "未知作者"}${when ? " · " + when : ""}`)));
     }
   }
 
@@ -176,38 +155,51 @@
     panel.textContent = "";
     const d = draft || emptyDraft();
 
-    const infoText = currentInfo
-      ? `作者：${currentInfo.author || "（未读到）"}\n文案：${currentInfo.caption || "（未读到）"}\n链接：${currentInfo.url || ""}${currentInfo.likeCountText ? `\n点赞 ${currentInfo.likeCountText}` : ""}${currentInfo.commentCountText ? ` · 评论 ${currentInfo.commentCountText}` : ""}${currentInfo.shareCountText ? ` · 分享 ${currentInfo.shareCountText}` : ""}`
-      : "还没提取到视频信息：先在左侧打开抖音并点开一个视频，再点“分析当前视频”；或在下面手动粘贴。";
-    const infoBox = h("p", { class: "muted", id: "douyin-current-info" }, infoText);
+    const info = h("div", { id: "douyin-current-info" });
+    if (currentInfo) {
+      const chips = [];
+      if (currentInfo.likeCountText) chips.push(h("span", { class: "chip" }, "赞 " + currentInfo.likeCountText));
+      if (currentInfo.commentCountText) chips.push(h("span", { class: "chip" }, "评 " + currentInfo.commentCountText));
+      if (currentInfo.shareCountText) chips.push(h("span", { class: "chip" }, "转 " + currentInfo.shareCountText));
+      info.append(
+        h("p", {}, h("b", {}, currentInfo.author || "（未读到作者）")),
+        h("p", { class: "muted small-text" }, (currentInfo.caption || "（未读到文案）").slice(0, 160)),
+        chips.length ? h("div", { class: "stat-line" }, ...chips) : "");
+    } else {
+      info.append(h("p", { class: "muted small-text" }, "在左边点开一个视频（进入视频详情页），再点下面的按钮。"));
+    }
 
-    const linkInput = h("input", { class: "input field-full", placeholder: "手动粘贴抖音视频链接（可选）", value: d.sourceUrl || (currentInfo && currentInfo.url) || "" });
-    const captionInput = h("textarea", { class: "input field-full", rows: 3, placeholder: "手动粘贴视频文案/补充说明（可选，分析时会一起发给 AI）", value: d.manualText || "" });
+    const linkInput = h("input", { class: "input field-full", placeholder: "抖音视频链接（可选）", value: d.sourceUrl || (currentInfo && currentInfo.url) || "" });
+    const captionInput = h("textarea", { class: "input field-full", rows: 3, placeholder: "视频文案 / 补充说明（可选，会一起发给 AI）", value: d.manualText || "" });
 
-    const analyzeBtn = h("button", { class: "btn primary douyin-analyze-btn", id: "douyin-analyze-btn", disabled: true, onclick: () => runAnalyze(root, "extract") }, "分析当前视频");
+    const analyzeBtn = h("button", { class: "btn primary block lg douyin-analyze-btn", id: "douyin-analyze-btn", disabled: true, onclick: () => runAnalyze(root, "extract") }, "分析当前视频");
     const manualBtn = h("button", { class: "btn douyin-analyze-btn", id: "douyin-analyze-manual-btn", disabled: true, onclick: () => runAnalyze(root, "manual") }, "用手动信息分析");
-    const aiHint = h("p", { class: "muted", id: "douyin-ai-hint" }, "正在读取 AI 设置…");
+    const aiHint = h("div", { class: "hint-bar", id: "douyin-ai-hint" }, "正在读取 AI 设置…");
 
     panel.append(
-      h("section", { class: "card module" },
-        h("header", { class: "card-head" }, h("h2", {}, "当前视频")),
-        infoBox,
-        h("p", { class: "card-desc" }, "手动粘贴（提取失败时的兜底）"),
-        linkInput,
-        captionInput,
-        h("div", { class: "actions" }, analyzeBtn, manualBtn),
-        aiHint));
+      h("section", { class: "side-card" },
+        h("h3", {}, "当前视频"),
+        info,
+        analyzeBtn,
+        h("div", { class: "gap-8" }),
+        aiHint,
+        h("details", { class: "fold" },
+          h("summary", {}, "读不到视频信息？手动粘贴链接和文案"),
+          linkInput, h("div", { class: "gap-6" }), captionInput,
+          h("div", { class: "actions" }, manualBtn))));
 
     if (!draft) {
-      panel.append(h("p", { class: "muted" }, "分析结果会显示在这里：风格拆解、风格 skill、脚本与分镜，全部可编辑，确认后点“导入到项目”。"));
+      panel.append(h("section", { class: "side-card" },
+        h("h3", {}, "分析结果"),
+        h("p", { class: "muted small-text" }, "分析后这里会出现风格拆解、风格 skill、脚本与分镜，都可以改，确认后点“导入到项目”。")));
     } else {
       panel.append(buildResultCard(root, d));
     }
 
     panel.append(
-      h("section", { class: "card module" },
-        h("header", { class: "card-head" }, h("h2", {}, "已保存的分析")),
-        h("div", { id: "douyin-saved-list" })));
+      h("section", { class: "side-card" },
+        h("h3", {}, "已保存的分析"),
+        h("div", { id: "douyin-saved-list", class: "clip-list" })));
     refreshAiStatus(root).catch(() => {});
     refreshSavedList(root).catch(() => {});
   }
@@ -286,19 +278,21 @@
       } catch (e) { window.Shell.toast(e.message, "error"); }
     } }, "导入到项目");
 
-    return h("section", { class: "card module" },
-      h("header", { class: "card-head" }, h("h2", {}, "分析结果（可编辑）")),
-      h("p", { class: "card-desc" }, "风格拆解"), styleBox,
-      h("p", { class: "card-desc" }, "风格 skill"),
-      skillNameInput, skillDescInput, skillBodyInput,
-      h("p", { class: "card-desc" }, "SKILL.md 文本（保存 skill 文件时写这个内容）"), skillTextArea,
-      h("p", { class: "card-desc" }, "脚本"),
-      titleInput, narrationInput,
-      h("p", { class: "card-desc" }, "分镜"),
-      shotsBox,
-      h("div", { class: "actions" },
-        h("button", { class: "btn", onclick: () => { d.shots.push({ narration: "", visual: "", imagePrompt: "", seconds: 0 }); renderShots(); } }, "＋ 添加镜头")),
-      h("div", { class: "actions" }, saveBtn, copyBtn, saveSkillBtn, importBtn));
+    return h("section", { class: "side-card" },
+      h("h3", {}, h("span", { class: "grow" }, "分析结果"), h("span", { class: "chip" }, `${d.shots.length} 镜`)),
+      h("div", { class: "actions" }, importBtn, saveBtn),
+      h("details", { class: "fold", open: true },
+        h("summary", {}, "脚本与分镜"),
+        titleInput, h("div", { class: "gap-6" }), narrationInput,
+        shotsBox,
+        h("div", { class: "actions" },
+          h("button", { class: "btn small", onclick: () => { d.shots.push({ narration: "", visual: "", imagePrompt: "", seconds: 0 }); renderShots(); } }, "＋ 添加镜头"))),
+      h("details", { class: "fold" }, h("summary", {}, "风格拆解"), styleBox),
+      h("details", { class: "fold" },
+        h("summary", {}, "风格 skill"),
+        skillNameInput, skillDescInput, skillBodyInput,
+        h("p", { class: "card-desc" }, "SKILL.md 文本（保存 skill 文件时写这个内容）"), skillTextArea,
+        h("div", { class: "actions" }, copyBtn, saveSkillBtn)));
   }
 
   async function saveDraft(root, d, { silent = false } = {}) {
@@ -359,7 +353,7 @@
     refreshAiStatus(root).catch(() => {});
     try {
       // “分析当前视频”时顺带截几帧画面给 AI 看（视图开着时）；手动分析不截图
-      const r = await api.video.douyin.analyze({ videoInfo, manualText: captionInput ? captionInput.value : "", useFrames: mode === "extract" && viewOpened });
+      const r = await api.video.douyin.analyze({ videoInfo, manualText: captionInput ? captionInput.value : "", useFrames: mode === "extract" && viewOpened() });
       if (!r.ok) throw new Error(r.error || "分析失败");
       const a = r.record;
       draft = {

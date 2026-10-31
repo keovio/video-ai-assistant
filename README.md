@@ -2,6 +2,12 @@
 
 口播视频自动化：脚本加分镜、配音、画面、合成导出。基于 electron-app-template（Electron 44），本地运行，数据存在本机。
 
+## 0.5.1 界面调整
+
+- 设置页与 content-ai-assistant 一致：左侧分类导航（业务设置 / 通用设置），右侧一次只显示一类；视频设置拆成“画面与新建、配音、AI 分析、ffmpeg”四类。
+- 抖音 / 即梦内嵌视图改成浏览器样式（`renderer/pages/embed-browser.js`）：后退、前进、刷新/停止、主页、地址栏（抖音里输入非网址即站内搜索）、在系统浏览器打开、加载进度条；进页面自动打开、占满窗口高度；站内新标签页链接在视图内打开。
+- 抖音分析、合成导出改为“左浏览器 + 右操作面板”：分析按钮、AI 状态、手动粘贴（折叠）、结果分组折叠；合成区显示配音/画面/ffmpeg 就绪情况、烧字幕开关、实时进度，最近成片可直接播放，每镜画面状态一目了然。
+
 ## 0.5.0 修复（问题审查后的集中修复）
 
 - macOS 从 Finder/Dock 启动也能找到 Homebrew 装的 ffmpeg/ffprobe（启动时补全 PATH：Homebrew、MacPorts、winget、Chocolatey、Scoop 等常见目录，`lib/video/bin-path.js`）。

@@ -1,5 +1,5 @@
 "use strict";
-// 设置分组：视频默认值（新建项目时用）与配音设置（M2）。
+// 设置分组（业务设置）：画面与新建、配音、AI 分析、ffmpeg 四类，各自一张卡片，在设置页左侧导航里切换。
 // 设置项已在 main.js 的 schema 里声明。TTS Key 不走 settings.json：
 // 页面只输入一次交给主进程加密存（safeStorage；无钥匙串时退回 0600 文件并明确提示），
 // 页面永远拿不到 Key 本身，只能拿到“已设置/末 4 位”。
@@ -16,110 +16,90 @@
       const input = h("input", {
         class: "input", placeholder,
         value: String(window.Shell.getSettings()[key] ?? ""),
-        oninput: debounce(() => window.Shell.saveSettings({ [key]: input.value }), 300),
+        oninput: debounce(() => window.Shell.saveSettings({ [key]: input.value.trim() }), 300),
       });
       window.Shell.onSettings((c, s) => { if (key in c && document.activeElement !== input) input.value = String(s[key] ?? ""); });
       return input;
     };
+    // Key 输入行：密码框 + 保存/清除，状态显示在说明里（与 content-ai-assistant 的 API Key 行一致）
+    const keyRow = (title, placeholder, statusFn, setFn) => {
+      const input = h("input", { class: "input", type: "password", placeholder, autocomplete: "off" });
+      const state = h("span", { class: "muted small-text" }, "正在读取…");
+      const refresh = async () => {
+        try {
+          const r = await statusFn();
+          state.textContent = r.set
+            ? `已保存（…${r.last4}）${r.insecureFallback ? "，本机无可用钥匙串，Key 以文件保存、未加密" : "，已用系统钥匙串加密"}`
+            : "还没有保存 Key";
+        } catch (e) { state.textContent = "读取失败：" + e.message; }
+      };
+      const save = async (value) => {
+        const r = await setFn(value);
+        if (r.ok) { input.value = ""; window.Shell.toast(value ? `${title} 已保存` : `${title} 已清除`, "success"); }
+        else window.Shell.toast(r.error || "保存失败", "error");
+        refresh();
+      };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value.trim()) save(input.value.trim()); });
+      refresh();
+      return row(title, state, h("div", { class: "actions" }, input,
+        h("button", { class: "btn", onclick: () => { if (!input.value.trim()) { window.Shell.toast("先粘贴 Key"); return; } save(input.value.trim()); } }, "保存"),
+        h("button", { class: "btn ghost", onclick: async () => {
+          if (!(await window.Shell.confirm(`清除已保存的 ${title}？`))) return;
+          save("");
+        } }, "清除")), { stack: true });
+    };
+
+    // ---------------- 画面与新建 ----------------
     window.Shell.registerSettingsSection({
-      id: "video",
-      title: "视频",
-      order: 15,
-      tag: "M2",
+      id: "video-general", title: "画面与新建", icon: "image", order: 1,
       render(box) {
-        const keyInput = h("input", { class: "input", type: "password", placeholder: "TTS Key（OpenAI 兼容服务用；即梦网页版不需要）", autocomplete: "off" });
-        const keyStatus = h("span", { class: "muted" }, "正在读取…");
-        const refreshKeyStatus = async () => {
+        box.append(
+          row("画面比例", "新建项目的默认比例", select("videoAspect", [["9:16", "9:16 竖屏"], ["16:9", "16:9 横屏"], ["1:1", "1:1 方形"]])),
+          row("新建项目镜头数", "新建项目时默认创建的空镜头数", range("videoDefaultShotCount", { min: 1, max: 12, step: 1, format: (v) => v + " 个" })),
+          row("默认时长（参考）", "仅作参考，实际时长按配音实测或口播字数估算", range("videoDefaultDuration", { min: 10, max: 300, step: 5, format: (v) => v + " 秒" })));
+      },
+    });
+
+    // ---------------- 配音 ----------------
+    window.Shell.registerSettingsSection({
+      id: "video-voice", title: "配音", icon: "mic", order: 2,
+      render(box) {
+        box.append(
+          row("配音服务商", "即梦尚未自动接通：选即梦后请在即梦网页生成配音，再用“导入音频”导入", select("ttsProvider", [["openai", "OpenAI 兼容 TTS"], ["jimeng", "即梦（网页版，手动导入）"]])),
+          row("音色", "OpenAI 兼容服务的音色名，例如 alloy", textInput("ttsVoice", "如 alloy")),
+          row("语速", "项目没有单独设置时都用这个倍率", range("ttsRate", { min: 0.5, max: 2, step: 0.05, format: (v) => Number(v).toFixed(2) + " 倍" })),
+          row("接口地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("ttsBaseUrl", "https://api.openai.com/v1"), { stack: true }),
+          row("模型", "例如 tts-1、gpt-4o-mini-tts", textInput("ttsModel", "如 tts-1")),
+          keyRow("TTS Key", "粘贴 TTS 服务的 API Key", () => api.video.secrets.status(), (v) => api.video.secrets.set(v)));
+      },
+    });
+
+    // ---------------- AI 分析 ----------------
+    window.Shell.registerSettingsSection({
+      id: "video-ai", title: "AI 分析", icon: "cpu", order: 3,
+      render(box) {
+        box.append(
+          row("接口地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("aiBaseUrl", "https://api.openai.com/v1"), { stack: true }),
+          row("模型", "聊天模型名；支持看图的模型（如 gpt-4o-mini、qwen-vl-plus）会结合视频画面分析", textInput("aiModel", "如 gpt-4o-mini")),
+          keyRow("AI Key", "粘贴 AI 服务的 API Key（抖音分析用）", () => api.video.ai.status(), (v) => api.video.ai.setKey(v)));
+      },
+    });
+
+    // ---------------- 系统依赖 ----------------
+    window.Shell.registerSettingsSection({
+      id: "video-system", title: "ffmpeg", icon: "terminal", order: 4,
+      render(box) {
+        const ffStatus = h("span", { class: "muted small-text" }, "正在检测…");
+        const refreshFf = async (fresh) => {
+          ffStatus.textContent = "正在检测…";
           try {
-            const r = await api.video.secrets.status();
-            keyStatus.textContent = r.set
-              ? `已设置（末 4 位 …${r.last4}）${r.insecureFallback ? "，注意：本机无可用钥匙串，Key 以文件形式保存，未加密" : ""}`
-              : "未设置";
-          } catch (e) { keyStatus.textContent = "读取失败：" + e.message; }
-        };
-        const aiKeyInput = h("input", { class: "input", type: "password", placeholder: "AI Key（OpenAI 兼容服务用，抖音分析需要）", autocomplete: "off" });
-        const aiKeyStatus = h("span", { class: "muted" }, "正在读取…");
-        const refreshAiKeyStatus = async () => {
-          try {
-            const r = await api.video.ai.status();
-            aiKeyStatus.textContent = r.set
-              ? `已设置（末 4 位 …${r.last4}）${r.insecureFallback ? "，注意：本机无可用钥匙串，Key 以文件形式保存，未加密" : ""}`
-              : "未设置";
-          } catch (e) { aiKeyStatus.textContent = "读取失败：" + e.message; }
-        };
-        const ffStatus = h("span", { class: "muted" }, "正在检测…");
-        const refreshFf = async () => {
-          try {
-            const r = await api.video.ffmpeg.status();
+            const r = await api.video.ffmpeg.status({ fresh: !!fresh });
             ffStatus.textContent = r.ok ? "ffmpeg 与 ffprobe 均可用" : r.warning;
           } catch (e) { ffStatus.textContent = "检测失败：" + e.message; }
         };
-
-        // 左栏分类、右栏对应表单（M4 左右结构；所有设置项与之前一致，新增 AI 分析一组）
-        const panels = {
-          general: h("div", {},
-            row("画面比例", "新建项目的默认比例", select("videoAspect", [["9:16", "9:16 竖屏"], ["16:9", "16:9 横屏"], ["1:1", "1:1 方形"]])),
-            row("新建项目镜头数", "新建项目时默认创建的空镜头数", range("videoDefaultShotCount", { min: 1, max: 12, step: 1, format: (v) => v + " 个" })),
-            row("默认时长（参考）", "仅作新建时的参考值，实际时长按配音实测或口播字数估算", range("videoDefaultDuration", { min: 10, max: 300, step: 5, format: (v) => v + " 秒" }))),
-          voice: h("div", {},
-            row("配音服务商", "即梦目前尚未自动接通：选即梦后生成配音会明确报错并指引你导入即梦下载的音频", select("ttsProvider", [["openai", "OpenAI 兼容 TTS"], ["jimeng", "即梦（网页版，尚未自动接通）"]])),
-            row("配音音色", "OpenAI 兼容服务用的音色名（如 alloy）；即梦的音色在即梦网页里选", textInput("ttsVoice", "如 alloy")),
-            row("配音语速", "生成配音的语速倍率", range("ttsRate", { min: 0.5, max: 2, step: 0.05, format: (v) => v + " 倍" })),
-            row("TTS 服务地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("ttsBaseUrl", "https://api.openai.com/v1")),
-            row("TTS 模型", "OpenAI 兼容服务的模型名", textInput("ttsModel", "如 tts-1")),
-            row("TTS Key", "只保存到主进程加密存储，不会显示在设置文件里；留空保存表示清除",
-              h("div", {},
-                keyInput,
-                h("div", { class: "actions" },
-                  h("button", { class: "btn small primary", onclick: async () => {
-                    const r = await api.video.secrets.set(keyInput.value);
-                    if (r.ok) { keyInput.value = ""; window.Shell.toast("TTS Key 已保存", "success"); }
-                    else window.Shell.toast(r.error || "保存失败", "error");
-                    await refreshKeyStatus();
-                  } }, "保存 Key"),
-                  h("button", { class: "btn small", onclick: async () => { keyInput.value = ""; window.Shell.toast("已清空输入框（未改动已保存的 Key）"); } }, "清空输入")),
-                h("p", { class: "muted" }, "", keyStatus)))),
-          ai: h("div", {},
-            row("AI 服务地址", "OpenAI 兼容服务的 Base URL；留空表示 https://api.openai.com/v1", textInput("aiBaseUrl", "https://api.openai.com/v1")),
-            row("AI 模型", "OpenAI 兼容服务的聊天模型名（需支持 JSON 输出）", textInput("aiModel", "如 gpt-4o-mini")),
-            row("AI Key", "抖音分析用；只保存到主进程加密存储，不会显示在设置文件里；留空保存表示清除",
-              h("div", {},
-                aiKeyInput,
-                h("div", { class: "actions" },
-                  h("button", { class: "btn small primary", onclick: async () => {
-                    const r = await api.video.ai.setKey(aiKeyInput.value);
-                    if (r.ok) { aiKeyInput.value = ""; window.Shell.toast("AI Key 已保存", "success"); }
-                    else window.Shell.toast(r.error || "保存失败", "error");
-                    await refreshAiKeyStatus();
-                  } }, "保存 Key"),
-                  h("button", { class: "btn small", onclick: async () => { aiKeyInput.value = ""; window.Shell.toast("已清空输入框（未改动已保存的 Key）"); } }, "清空输入")),
-                h("p", { class: "muted" }, "", aiKeyStatus)))),
-          system: h("div", {},
-            row("系统 ffmpeg", "配音实测时长和后续合成导出都依赖系统 ffmpeg/ffprobe",
-              h("div", {},
-                h("div", { class: "actions" },
-                  h("button", { class: "btn small", onclick: refreshFf }, "重新检测")),
-                h("p", { class: "muted" }, "", ffStatus)))),
-        };
-        const nav = h("div", { class: "settings-nav" });
-        const right = h("div", { class: "settings-panel" });
-        const categories = [["general", "画面与新建"], ["voice", "配音"], ["ai", "AI 分析"], ["system", "系统"]];
-        const selectCat = (id) => {
-          for (const [cid, label] of categories) {
-            panels[cid].hidden = cid !== id;
-            const btn = nav.querySelector(`[data-cat="${cid}"]`);
-            if (btn) btn.classList.toggle("active", cid === id);
-          }
-        };
-        for (const [cid, label] of categories) {
-          nav.append(h("button", { class: "btn small", dataset: { cat: cid }, onclick: () => selectCat(cid) }, label));
-          right.append(panels[cid]);
-        }
-        selectCat("general");
-        box.append(h("div", { class: "settings-split" }, nav, right));
-        refreshKeyStatus();
-        refreshAiKeyStatus();
-        refreshFf();
+        box.append(row("系统 ffmpeg", ffStatus, h("button", { class: "btn", onclick: () => refreshFf(true) }, "重新检测")),
+          h("p", { class: "muted small-text" }, "配音实测时长和合成导出依赖系统 ffmpeg / ffprobe。macOS：brew install ffmpeg；Windows：winget install ffmpeg。装完点“重新检测”，不用重启。"));
+        refreshFf(false);
       },
     });
   }

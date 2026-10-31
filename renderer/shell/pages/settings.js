@@ -4,6 +4,7 @@
 // 加自己的设置分组（一张卡片）：
 //   Shell.registerSettingsSection({ id: "sync", title: "同步", order: 15, tag: "可选", render(box, ctx) { box.append(row(...)) } });
 // 设置项要先在 main.js 的 schema 里声明，读写用 Shell.getSettings() / Shell.saveSettings({ key: value })。
+// 设置页分两组：左侧导航上面「业务设置」（应用自己注册的分组，默认都在这里），下面「通用设置」（外观、更新、日志等内置分组，group: "system"）；右侧一次只显示一类。
 (function () {
   const { h, icon } = window.Shell;
   const api = window.app;
@@ -196,7 +197,7 @@
         row("主题色", "按钮、选中项和进度条的颜色", swatches("accent", ACCENTS.map(([v, l]) => [v, l, "accent-" + v]))),
         row("界面缩放", "调整所有文字和控件的大小", select("zoom", [[0.8, "80%"], [0.9, "90%"], [1, "100%"], [1.1, "110%"], [1.25, "125%"], [1.5, "150%"]], { parse: Number })));
     } },
-    { id: "background", title: "背景", icon: "image", order: 12, tag: (s) => (s.performanceMode ? "性能模式" : ""), render(box) {
+    { id: "background", title: "背景", icon: "layers", order: 12, tag: (s) => (s.performanceMode ? "性能模式" : ""), render(box) {
       const clearBtn = h("button", { class: "btn small ghost", onclick: async () => { await api.appearance.clearBackground(); window.Shell.toast("已移除自定义背景", "success"); } }, "移除自定义图片");
       const changeBtn = h("button", { class: "btn small", onclick: async () => { const r = await api.appearance.pickBackground(); if (!r.ok && !r.canceled) window.Shell.toast(r.error || "设置背景失败", "error"); } }, "更换图片…");
       const customTools = h("div", { class: "actions" }, changeBtn, clearBtn);
@@ -209,7 +210,7 @@
         row("毛玻璃", "卡片和侧边栏半透明模糊，透出背景", toggle("glass")),
         row("性能模式", "关闭毛玻璃模糊、阴影和动画，界面更流畅、更省电。老电脑或开很多窗口时推荐", toggle("performanceMode")));
     } },
-    { id: "font", title: "字体", order: 14, render(box) {
+    { id: "font", title: "字体", icon: "type", order: 14, render(box) {
       const custom = h("input", { class: "input", list: "font-suggest", placeholder: "输入字体名，如 LXGW WenKai", value: window.Shell.getSettings().fontCustom || "",
         oninput: window.Shell.debounce(() => window.Shell.saveSettings({ fontCustom: custom.value }), 300) });
       const datalist = h("datalist", { id: "font-suggest" }, ...COMMON_FONTS.map((f) => h("option", { value: f })));
@@ -223,7 +224,7 @@
         row("字号", "正文文字大小（界面缩放会再整体放大）", range("fontSize", { min: 12, max: 18, step: 1, format: (v) => v + " px" })),
         h("div", { class: "font-preview" }, h("div", { class: "fp-big" }, "敏捷的棕色狐狸 The quick brown fox"), h("div", { class: "muted small" }, "0123456789 · 预览当前字体和字号")));
     } },
-    { id: "update", title: "关于与更新", icon: "arrowDown", order: 30, render(box, ctx) {
+    { id: "update", title: "关于与更新", icon: "refresh", order: 30, render(box, ctx) {
       const i = ctx.info, sy = ctx.system;
       const stat = (k, v) => h("div", { class: "stat" }, h("div", { class: "muted small" }, k), h("div", { class: "stat-v" }, v));
       const kv = (k, v) => h("div", { class: "kv" }, h("span", { class: "muted" }, k), h("span", { class: "mono" }, v));
@@ -264,26 +265,55 @@
     } },
   ];
 
+  // 打开设置并跳到某一类：Shell.openSettings("images")
+  let pending = "", showFn = null;
+  window.Shell.openSettings = (id) => {
+    if (showFn) showFn(id); else pending = id;
+    window.Shell.navigate("settings");
+  };
+
   window.Shell.registerPage({
     id: "settings", title: "设置", icon: "settings", section: "system", order: 30,
     async render(root, ctx) {
       root.classList.add("page-wide");
       root.append(h("header", { class: "page-head" }, h("div", {}, h("h1", {}, "设置"), h("p", { class: "sub" }, "修改立即生效并自动保存"))));
-      const body = window.Shell.modules();
-      body.classList.add("settings");
-      root.append(body);
+      // 左侧分类导航，右侧一次只显示一类（不用从头滚到尾）
+      const groups = {
+        custom: { title: "业务设置", items: [] },
+        system: { title: "通用设置", items: [] },
+      };
+      const nav = h("nav", { class: "set-nav" });
+      const content = h("div", { class: "set-content settings" });
+      root.append(h("div", { class: "set-layout" }, nav, content));
       const c = { ...ctx, system: await api.system.info() };
-      for (const sec of [...builtin, ...sections].sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
+      const all = [];
+      for (const sec of [...builtin.map((b) => ({ group: "system", ...b })), ...sections].sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
         const box = h("div", { class: "set-group-body" });
         const tagEl = h("span", { class: "card-tag" });
         const drawTag = () => { const t = typeof sec.tag === "function" ? sec.tag(window.Shell.getSettings()) : sec.tag; tagEl.textContent = t || ""; tagEl.hidden = !t; };
         drawTag();
         if (typeof sec.tag === "function") window.Shell.onSettings(drawTag);
-        body.append(h("section", { class: "card module set-group", id: `settings-${sec.id}` },
-          h("header", { class: "card-head" }, h("h2", {}, sec.icon ? icon(sec.icon) : null, sec.title), tagEl), box));
+        const card = h("section", { class: "card module set-group", id: `settings-${sec.id}`, hidden: true },
+          h("header", { class: "card-head" }, h("h2", {}, sec.icon ? icon(sec.icon) : null, sec.title), tagEl), box);
+        content.append(card);
         try { await sec.render(box, c); } catch (err) { window.Shell.reportError(err); box.append(h("p", { class: "error" }, err.message)); }
-        if (!box.childElementCount) document.getElementById(`settings-${sec.id}`)?.remove();
+        if (!box.childElementCount) { card.remove(); continue; }
+        const btn = h("button", { class: "set-nav-item", "data-sec": sec.id, onclick: () => show(sec.id) }, sec.icon ? icon(sec.icon) : h("span", { class: "set-nav-dot" }), h("span", {}, sec.title));
+        (groups[sec.group] || groups.custom).items.push(btn);
+        all.push(sec.id);
       }
+      for (const g of Object.values(groups)) if (g.items.length) nav.append(h("div", { class: "set-nav-group" }, g.title), ...g.items);
+      function show(id, opts = {}) {
+        if (!all.includes(id)) id = all[0];
+        for (const el of content.children) el.hidden = el.id !== `settings-${id}`;
+        for (const b of nav.querySelectorAll(".set-nav-item")) b.classList.toggle("active", b.dataset.sec === id);
+        try { localStorage.setItem("settings.section", id); } catch { /* ignore */ }
+        if (!opts.keepScroll) root.scrollTop = 0;
+      }
+      let last = ""; try { last = localStorage.getItem("settings.section") || ""; } catch { /* ignore */ }
+      show(pending || last || all[0]);
+      pending = "";
+      showFn = show;
     },
   });
 })();

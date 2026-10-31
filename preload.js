@@ -93,6 +93,11 @@ contextBridge.exposeInMainWorld("app", {
       openFolder: (renderId) => ipcRenderer.invoke("video:renders.openFolder", renderId),
       openOutput: (renderId) => ipcRenderer.invoke("video:renders.openOutput", renderId),
     },
+    // 内嵌浏览器工具栏：后退/前进/刷新/主页/地址栏/外部浏览器打开，以及导航状态推送
+    embed: {
+      nav: (kind, action, arg) => ipcRenderer.invoke("video:embed.nav", kind, action, arg),
+      onState: on("video:embed.state"),
+    },
     jimeng: {
       open: () => ipcRenderer.invoke("video:jimeng.open"),
       show: () => ipcRenderer.invoke("video:jimeng.show"),
@@ -121,7 +126,7 @@ contextBridge.exposeInMainWorld("app", {
       import: (id) => ipcRenderer.invoke("video:analyses.import", id),
     },
     tts: { providers: () => ipcRenderer.invoke("video:tts.providers") },
-    ffmpeg: { status: () => ipcRenderer.invoke("video:ffmpeg.status") },
+    ffmpeg: { status: (opts) => ipcRenderer.invoke("video:ffmpeg.status", opts || {}) },
     secrets: {
       status: () => ipcRenderer.invoke("video:secrets.status"),
       set: (value) => ipcRenderer.invoke("video:secrets.set", value),
