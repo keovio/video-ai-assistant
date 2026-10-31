@@ -21,14 +21,17 @@
   };
 
   const fmtSecs = (s) => (Math.round((Number(s) || 0) * 10) / 10) + " 秒";
+  const defaultShots = () => { try { return Number(window.Shell.getSettings().videoDefaultShotCount) || 6; } catch { return 6; } };
   const defaultAspect = () => { try { return window.Shell.getSettings().videoAspect || "9:16"; } catch { return "9:16"; } };
 
   // 新建项目弹窗：resolve(创建好的 project) 或 null（取消）
   function createDialog() {
     return new Promise((resolve) => {
       const title = h("input", { class: "input", placeholder: "例如：雨夜的街道", maxlength: 80 });
-      const shots = h("select", { class: "input" }, ...[3, 4, 5, 6, 8, 10, 12].map((n) => h("option", { value: String(n) }, `${n} 个镜头`)));
-      shots.value = "6";
+      // 镜头数自由输入（1–30），默认取设置里的“新建项目镜头数”
+      const shots = h("input", { class: "input", type: "number", min: 1, max: 30, step: 1, inputmode: "numeric" });
+      shots.value = String(defaultShots());
+      const shotCountValue = () => Math.max(1, Math.min(30, Math.floor(Number(shots.value) || defaultShots())));
       const aspect = h("select", { class: "input" }, ...ASPECTS.map(([v, l]) => h("option", { value: v }, l)));
       aspect.value = defaultAspect();
       const okBtn = h("button", { class: "btn primary" }, "创建并打开");
@@ -36,7 +39,7 @@
       const submit = async () => {
         okBtn.disabled = true;
         try {
-          const r = await api.video.projects.create({ title: title.value.trim(), shotCount: Number(shots.value), aspect: aspect.value });
+          const r = await api.video.projects.create({ title: title.value.trim(), shotCount: shotCountValue(), aspect: aspect.value });
           if (!r || !r.ok) throw new Error((r && r.error) || "创建失败");
           finish(r.project);
         } catch (e) { window.Shell.toast(e.message, "error"); okBtn.disabled = false; }

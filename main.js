@@ -54,7 +54,7 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   ...BASE_SCHEMA,
   // 视频默认值（M1：新建项目时用）与配音设置（M2：服务商/音色/语速/服务地址/模型）
   videoDefaultDuration: { type: "number", min: 10, max: 300, step: 1, default: 75 },
-  videoDefaultShotCount: { type: "number", min: 1, max: 12, step: 1, default: 6 },
+  videoDefaultShotCount: { type: "number", min: 1, max: 30, step: 1, default: 6 },
   videoAspect: { type: "enum", values: ["9:16", "16:9", "1:1"], default: "9:16" },
   ttsProvider: { type: "enum", values: ["openai", "local", "voicebox", "jimeng"], default: "openai" },
   ttsVoice: { type: "string", maxLength: 64, default: "alloy" },
