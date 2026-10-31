@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("app", {
       update: (id, patch) => ipcRenderer.invoke("video:projects.update", id, patch),
       remove: (id) => ipcRenderer.invoke("video:projects.remove", id),
       duplicate: (id) => ipcRenderer.invoke("video:projects.duplicate", id),
+      setBgm: (id, file) => ipcRenderer.invoke("video:projects.setBgm", id, file),
+      clearBgm: (id) => ipcRenderer.invoke("video:projects.clearBgm", id),
     },
     shots: {
       list: (projectId) => ipcRenderer.invoke("video:shots.list", projectId),

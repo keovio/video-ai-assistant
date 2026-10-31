@@ -90,6 +90,43 @@
         await load(root);
       } catch (e) { window.Shell.toast(e.message, "error"); startBtn.disabled = false; }
     } }, running ? "合成中…" : "开始合成");
+    // ---- 背景音乐（0.6.6）：循环铺满全片、结尾淡出；音量 0 = 自动（有配音 18%，无配音 80%） ----
+    const voice = data.project.voice || {};
+    const hasBgm = !!voice.bgm;
+    const bgmInput = h("input", { type: "file", accept: ".mp3,.wav,.m4a,.ogg,.flac,.aac,.opus,audio/*", hidden: true,
+      onchange: async () => {
+        const f = bgmInput.files && bgmInput.files[0]; if (!f) return;
+        try {
+          const r = await api.video.projects.setBgm(currentId, { name: f.name, data: await f.arrayBuffer() });
+          if (!r.ok) window.Shell.toast(r.error || "设置背景音乐失败", "error");
+          else window.Shell.toast("背景音乐已设置：" + f.name, "success");
+        } catch (e) { window.Shell.toast(e.message, "error"); }
+        bgmInput.value = "";
+        await load(root);
+      } });
+    const volPct = Math.round((Number(voice.bgmVolume) || 0) * 100);
+    const volLabel = h("span", { class: "muted small-text" });
+    const drawVol = (v) => { volLabel.textContent = v > 0 ? v + "%" : (voiced ? "自动（18%）" : "自动（80%）"); };
+    const volInput = h("input", { type: "range", min: 0, max: 100, step: 5, value: String(volPct), disabled: !hasBgm });
+    drawVol(volPct);
+    volInput.addEventListener("input", () => drawVol(Number(volInput.value)));
+    volInput.addEventListener("change", async () => {
+      const r = await api.video.projects.update(currentId, { voice: { ...voice, bgmVolume: Number(volInput.value) / 100 } });
+      if (!r || !r.ok) window.Shell.toast((r && r.error) || "保存音量失败", "error");
+      else voice.bgmVolume = Number(volInput.value) / 100;
+    });
+    const bgmBlock = h("div", { class: "bgm-block" },
+      h("div", { class: "bgm-line" },
+        h("b", {}, "背景音乐"),
+        h("span", { class: "muted small-text grow", title: voice.bgmName || voice.bgm || "" }, hasBgm ? (voice.bgmName || voice.bgm.split("/").pop()) : "未设置"),
+        h("button", { class: "btn small", onclick: () => bgmInput.click() }, hasBgm ? "更换" : "选择音乐"),
+        hasBgm ? h("button", { class: "btn small danger-ghost", onclick: async () => {
+          const r = await api.video.projects.clearBgm(currentId);
+          if (!r.ok) window.Shell.toast(r.error || "移除失败", "error");
+          await load(root);
+        } }, "移除") : "",
+        bgmInput),
+      hasBgm ? h("div", { class: "bgm-volume" }, h("span", { class: "small-text" }, "音量"), volInput, volLabel) : "");
     const progressBar = h("div", {});
     const progressText = h("p", { class: "muted small-text" });
     const progress = h("div", { hidden: !running }, h("div", { class: "render-progress" }, progressBar), progressText);
@@ -110,9 +147,10 @@
       ff.ok ? "" : h("div", { class: "hint-bar warn" }, h("span", { class: "grow" }, ff.warning || "合成前请先安装 ffmpeg"),
         h("button", { class: "btn small", onclick: () => (window.Shell.openSettings ? window.Shell.openSettings("video-system") : window.Shell.navigate("settings")) }, "查看")),
       h("label", { class: "switch-line" }, h("span", {}, "烧入字幕"), h("span", { class: "switch" }, burnInput, h("span", { class: "slider" }))),
+      bgmBlock,
       startBtn,
       progress,
-      h("p", { class: "muted small-text" }, "没有画面的镜头用黑场，没有配音的用静音，都不会丢；烧字幕失败时只输出 SRT。"));
+      h("p", { class: "muted small-text" }, "没有画面的镜头用黑场，没有配音的用静音；纯画面镜头可在分镜编辑里设时长。背景音乐自动循环到片尾并淡出。烧字幕失败时只输出 SRT。"));
 
     // ---- 最近成片 ----
     let latestCard = null;

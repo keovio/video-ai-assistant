@@ -20,8 +20,17 @@
   const fmt = (s) => (Math.round(Number(s || 0) * 10) / 10) + " 秒";
   const fmtRange = (start, end) => `${fmt(start)} – ${fmt(end)}`;
   // 某镜的计时用时长：已挂配音且有秒数时用该秒数（实测或估算见 audioMeasured），否则字数估算
-  const shotSeconds = (s) => (s.audioAssetId && Number(s.audioSeconds) > 0
-    ? Math.round(Number(s.audioSeconds) * 10) / 10 : estimate(s.narration));
+  // 0.6.6：没有配音时依次用 手动时长 > 口播估算 > 视频片段时长 > 有画面默认 3 秒 > 0（与 lib/video-model.measuredDuration 一致）
+  const r1 = (x) => Math.round(Number(x) * 10) / 10;
+  const shotSeconds = (s) => {
+    if (s.audioAssetId && Number(s.audioSeconds) > 0) return r1(s.audioSeconds);
+    if (Number(s.seconds) > 0) return r1(s.seconds);
+    const est = estimate(s.narration);
+    if (est > 0) return est;
+    if (s.videoAssetId && Number(s.clipSeconds) > 0) return r1(s.clipSeconds);
+    if (s.videoAssetId || s.imageAssetId) return 3;
+    return 0;
+  };
   const audioText = (s) => {
     if (!s.audioAssetId) return s.error ? `配音：失败（${s.error}）` : "配音：暂无，请生成或导入音频";
     const src = s.audioSource === "import" ? "导入" : "TTS 生成";
@@ -194,6 +203,23 @@
       const imagePrompt = h("textarea", { class: "input field-full", rows: 3, placeholder: "可空，默认用画面描述" }, s.imagePrompt || "");
       imagePrompt.addEventListener("input", () => { s.imagePrompt = imagePrompt.value; refreshDirty(); });
 
+      // 手动时长：没有配音时生效（纯画面、只放背景音乐的镜头）；留空 = 自动
+      const secondsInput = h("input", { class: "input shot-seconds", type: "number", min: 0, max: 600, step: 0.5,
+        placeholder: "自动", value: Number(s.seconds) > 0 ? String(s.seconds) : "" });
+      const secondsHint = h("span", { class: "muted small-text" });
+      const drawSecondsHint = () => {
+        secondsHint.textContent = s.audioAssetId
+          ? "已有配音，按配音时长（" + fmt(s.audioSeconds) + "），这里不生效"
+          : Number(s.seconds) > 0 ? "按手动时长" : "自动：当前 " + fmt(shotSeconds(s)) + "（口播估算 / 片段时长 / 有画面默认 3 秒）";
+      };
+      drawSecondsHint();
+      secondsInput.addEventListener("input", () => {
+        const v = Number(secondsInput.value);
+        s.seconds = Number.isFinite(v) && v > 0 ? Math.min(600, Math.round(v * 10) / 10) : 0;
+        drawSecondsHint(); updateTotals(); redrawListLight();
+        const tagEl = detailBox.querySelector(".shot-detail .card-head .small-text");
+        const tt = timings(draft.shots)[i]; if (tagEl && tt) tagEl.textContent = fmtRange(tt.start, tt.end);
+      });
       const listenBtn = h("button", { class: "btn small", disabled: !s.audioAssetId, onclick: () => listenShot(s, listenBtn) }, "试听");
       const genBtn = h("button", { class: "btn small", onclick: () => generateShot(s, genBtn) }, "生成配音");
       const importInput = h("input", { type: "file", accept: ".mp3,.wav,.m4a,.ogg,.flac,.aac,.opus,audio/*", hidden: true,
@@ -217,8 +243,10 @@
             h("button", { class: "btn small ghost", title: "上移", disabled: i === 0, onclick: () => move(i, -1) }, "↑ 上移"),
             h("button", { class: "btn small ghost", title: "下移", disabled: i === draft.shots.length - 1, onclick: () => move(i, 1) }, "↓ 下移"),
             h("button", { class: "btn small danger-ghost", onclick: () => removeShot(i) }, "删除")),
-          label("口播", "约 " + fmt(t.seconds)),
+          label("口播", "约 " + fmt(t.seconds) + "，可留空做纯画面镜头"),
           narration,
+          label("时长（秒）", "没有配音时用"),
+          h("div", { class: "seconds-line" }, secondsInput, secondsHint),
           label("画面描述"),
           visual,
           label("即梦提示词", "生成视频片段时用"),
@@ -265,7 +293,7 @@
     // 之前是直接用服务端的旧口播生成、操作完重载草稿，把没保存的改动整个吞掉。
     const snapshot = () => JSON.stringify({
       t: titleInput.value, g: tagsInput.value, a: aspectSelect.value, d: deletedIds.length,
-      s: draft.shots.map((x) => [x.id || "", !!x._new, x.narration || "", x.visual || "", x.imagePrompt || ""]),
+      s: draft.shots.map((x) => [x.id || "", !!x._new, x.narration || "", x.visual || "", x.imagePrompt || "", Number(x.seconds) || 0]),
     });
     const isDirty = () => snapshot() !== savedSnap;
     function refreshDirty() {
@@ -349,10 +377,10 @@
         const finalIds = [];
         for (const s of draft.shots) {
           if (s._new) {
-            const r = await unwrap(await api.video.shots.add(currentId, { narration: s.narration, visual: s.visual, imagePrompt: s.imagePrompt }));
+            const r = await unwrap(await api.video.shots.add(currentId, { narration: s.narration, visual: s.visual, imagePrompt: s.imagePrompt, seconds: Number(s.seconds) || 0 }));
             finalIds.push(r.shot.id);
           } else {
-            await unwrap(await api.video.shots.update(s.id, { narration: s.narration, visual: s.visual, imagePrompt: s.imagePrompt }));
+            await unwrap(await api.video.shots.update(s.id, { narration: s.narration, visual: s.visual, imagePrompt: s.imagePrompt, seconds: Number(s.seconds) || 0 }));
             finalIds.push(s.id);
           }
         }

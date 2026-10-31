@@ -606,3 +606,11 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .log-line.error { background: color-mix(in srgb, var(--error) 10%, transparent); }
 .log-line.error .log-msg { color: var(--error); font-weight: 500; }
 .log-line.done .log-msg { color: var(--success); }
+
+/* 0.6.6 镜头手动时长、背景音乐 */
+.seconds-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seconds-line .shot-seconds { width: 110px; }
+.bgm-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.bgm-line .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bgm-volume { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+.bgm-volume input[type=range] { flex: 1; }
