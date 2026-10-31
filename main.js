@@ -56,7 +56,7 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   videoDefaultDuration: { type: "number", min: 10, max: 300, step: 1, default: 75 },
   videoDefaultShotCount: { type: "number", min: 1, max: 12, step: 1, default: 6 },
   videoAspect: { type: "enum", values: ["9:16", "16:9", "1:1"], default: "9:16" },
-  ttsProvider: { type: "enum", values: ["openai", "local", "jimeng"], default: "openai" },
+  ttsProvider: { type: "enum", values: ["openai", "local", "voicebox", "jimeng"], default: "openai" },
   ttsVoice: { type: "string", maxLength: 64, default: "alloy" },
   ttsRate: { type: "number", min: 0.5, max: 2, step: 0.05, default: 1 },
   ttsBaseUrl: { type: "string", maxLength: 500, default: "" },
@@ -64,6 +64,11 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   // 本地 TTS（0.6.1）：本机跑的 OpenAI 兼容语音服务（Kokoro-FastAPI、openedai-speech、CosyVoice/IndexTTS 的兼容封装等），Key 可空
   ttsLocalBaseUrl: { type: "string", maxLength: 500, default: "http://127.0.0.1:8880/v1" },
   ttsLocalModel: { type: "string", maxLength: 128, default: "kokoro" },
+  // Voicebox（0.6.2）：本机声音克隆工作室，桌面版后端默认 17493 端口；引擎默认 qwen（Qwen3-TTS）
+  ttsVoiceboxBaseUrl: { type: "string", maxLength: 500, default: "http://127.0.0.1:17493" },
+  ttsVoiceboxEngine: { type: "string", maxLength: 64, default: "qwen" },
+  ttsVoiceboxModelSize: { type: "enum", values: ["1.7B", "0.6B"], default: "1.7B" },
+  ttsVoiceboxLanguage: { type: "enum", values: ["zh", "en", "ja", "ko"], default: "zh" },
   // AI 文本分析（M4：抖音分析用 OpenAI 兼容 chat completions；Key 走 secrets 存储，不进 settings.json）
   aiBaseUrl: { type: "string", maxLength: 500, default: "" },
   aiModel: { type: "string", maxLength: 128, default: "gpt-4o-mini" },
@@ -491,6 +496,8 @@ setupVideoIpc({
     ttsProvider: settings.get("ttsProvider"), ttsVoice: settings.get("ttsVoice"), ttsRate: settings.get("ttsRate"),
     ttsBaseUrl: settings.get("ttsBaseUrl"), ttsModel: settings.get("ttsModel"),
     ttsLocalBaseUrl: settings.get("ttsLocalBaseUrl"), ttsLocalModel: settings.get("ttsLocalModel"),
+    ttsVoiceboxBaseUrl: settings.get("ttsVoiceboxBaseUrl"), ttsVoiceboxEngine: settings.get("ttsVoiceboxEngine"),
+    ttsVoiceboxModelSize: settings.get("ttsVoiceboxModelSize"), ttsVoiceboxLanguage: settings.get("ttsVoiceboxLanguage"),
   }),
   getTtsKey: () => ttsSecrets.get("ttsApiKey"),
   getAiSettings: () => ({ aiBaseUrl: settings.get("aiBaseUrl"), aiModel: settings.get("aiModel") }),

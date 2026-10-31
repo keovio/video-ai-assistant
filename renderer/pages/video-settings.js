@@ -106,7 +106,7 @@
     window.Shell.registerSettingsSection({
       id: "video-voice", title: "配音", icon: "mic", order: 2,
       render(box) {
-        const head = row("配音服务商", "", select("ttsProvider", [["openai", "云端 TTS（OpenAI 兼容）"], ["local", "本地 TTS（本机服务）"], ["jimeng", "即梦（网页版，手动导入）"]]));
+        const head = row("配音服务商", "", select("ttsProvider", [["openai", "云端 TTS（OpenAI 兼容）"], ["local", "本地 TTS（本机服务）"], ["voicebox", "Voicebox（本机声音克隆）"], ["jimeng", "即梦（网页版，手动导入）"]]));
         const body = h("div", {});
         const draw = () => {
           const p = window.Shell.getSettings().ttsProvider || "openai";
@@ -115,6 +115,14 @@
           if (p === "jimeng") {
             desc.textContent = "即梦尚未自动接通：在即梦网页生成配音后，用分镜里的“导入音频”导入";
             body.replaceChildren();
+          } else if (p === "voicebox") {
+            desc.textContent = "先在 Voicebox 桌面版里用 5–15 秒录音克隆出声音档案，这里选档案名即可；Voicebox 需保持打开，不需要 Key";
+            body.replaceChildren(
+              row("服务地址", "Voicebox 后端地址，桌面版默认 http://127.0.0.1:17493", textInput("ttsVoiceboxBaseUrl", "http://127.0.0.1:17493"), { stack: true }),
+              row("声音档案", "Voicebox 里的档案名；点“获取列表”从 Voicebox 读取", pickerInput("ttsVoice", "档案名", voices("tts-voicebox"), "档案")),
+              row("引擎", "qwen 即 Qwen3-TTS，中文克隆推荐；其他引擎需先在 Voicebox 里下载", pickerInput("ttsVoiceboxEngine", "qwen", models("tts-voicebox"))),
+              row("模型大小", "1.7B 质量更好，建议 16GB 内存以上；0.6B 更快更省内存", select("ttsVoiceboxModelSize", [["1.7B", "1.7B（质量优先）"], ["0.6B", "0.6B（速度优先）"]])),
+              row("语言", "口播文案的语言", select("ttsVoiceboxLanguage", [["zh", "中文"], ["en", "英文"], ["ja", "日文"], ["ko", "韩文"]])));
           } else if (p === "local") {
             desc.textContent = "本机跑的语音服务，只要提供 OpenAI 兼容的 /audio/speech 接口就能用，比如 Kokoro-FastAPI、openedai-speech，或 CosyVoice、IndexTTS、GPT-SoVITS 的 OpenAI 兼容封装；不需要 Key";
             body.replaceChildren(

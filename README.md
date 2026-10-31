@@ -2,6 +2,14 @@
 
 口播视频自动化：脚本加分镜、配音、画面、合成导出。基于 electron-app-template（Electron 44），本地运行，数据存在本机。
 
+## 0.6.2 Voicebox 声音克隆配音
+
+- 配音服务商新增 `voicebox`：对接本机 [Voicebox](https://voicebox.sh) 桌面版（后端默认 `http://127.0.0.1:17493`）。
+- 先在 Voicebox 里用参考录音克隆“声音档案”，设置 → 配音里点“获取列表”（`GET /profiles`）选档案名。
+- 生成：`POST /generate { profile_id, text, language, engine, model_size }`，新版异步时轮询 `GET /history/{id}`，再 `GET /audio/{id}` 下载（通常 wav，按文件头定扩展名）。
+- 设置项：`ttsVoiceboxBaseUrl`、`ttsVoiceboxEngine`（默认 `qwen` 即 Qwen3-TTS）、`ttsVoiceboxModelSize`（1.7B/0.6B）、`ttsVoiceboxLanguage`。语速对 Voicebox 不生效。
+- 测试：`test/video-062-voicebox.test.js`。
+
 ## 0.6.1 模型选择与本地 TTS
 
 - 设置里的 AI 模型、配音模型、音色旁边有“获取列表”：主进程用已存的 Key 调 `GET {Base URL}/models`（音色试 `/audio/voices`、`/voices`），结果缓存在本机，下拉选择；接口不提供列表时仍可手填。
