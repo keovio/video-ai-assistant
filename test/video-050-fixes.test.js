@@ -249,3 +249,22 @@ test("AI 看画面：带截图调用；模型不支持图片时退回纯文本",
   assert.equal(r2.usedImages, false);
   assert.equal(r2.script.shots.length, 1);
 });
+
+test("0.6.26：生成配音可取消，取消后不算失败", async () => {
+  const fetchImpl = (_url, opts) => new Promise((_res, rej) => {
+    opts.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  });
+  const { store, h } = harness({ fetchImpl });
+  const { project } = store.createProject({ title: "T" }, 1);
+  const shot = store.shotsOf(project.id)[0];
+  store.updateShot(shot.id, { narration: "你好" });
+  const p = h["video:shots.generateAudio"](null, shot.id, {});
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(store.shots.get(shot.id).status, "voicing");
+  const c = await h["video:shots.cancelAudio"](null, shot.id);
+  assert.equal(c.cancelled, 1);
+  const r = await p;
+  assert.equal(r.cancelled, true);
+  assert.notEqual(store.shots.get(shot.id).status, "failed");
+  assert.notEqual(store.shots.get(shot.id).status, "voicing");
+});

@@ -254,7 +254,7 @@
           imagePrompt,
           h("div", { class: "asset-box" },
             h("div", { class: "asset-line" },
-              h("b", {}, "配音"), h("span", { class: "muted small-text grow" }, audioText(s).replace(/^配音：/, "")),
+              h("b", {}, "配音"), h("span", { class: "muted small-text grow audio-status" }, audioText(s).replace(/^配音：/, "")),
               genBtn, importBtn, listenBtn, clearBtn, importInput),
             h("div", { class: "asset-line" },
               h("b", {}, "画面"), h("span", { class: "muted small-text grow" }, videoText(s).replace(/^画面：/, "")),
@@ -316,17 +316,24 @@
       return fresh;
     };
     const generateShot = async (s0, btn) => {
+      if (btn._cancel) return btn._cancel();
       const s = await ensureSaved(s0); if (!s) return;
       if (!String(s.narration || "").trim()) { window.Shell.toast("这镜没有口播文案，无法生成配音", "error"); return; }
-      const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
+      // 0.6.26：生成中按钮变“取消”
+      const old = btn.textContent;
+      // 0.6.26：重新生成时先把上次的失败提示换成“生成中”
+      const st = btn.closest(".asset-line") && btn.closest(".asset-line").querySelector(".audio-status");
+      if (st) { st.textContent = "生成中…（首次加载模型会慢一些）"; st.classList.remove("error-text"); }
+      btn.textContent = "取消生成"; btn._cancel = () => { btn.disabled = true; btn.textContent = "取消中…"; api.video.shots.cancelAudio(s.id); };
       try {
         const r = await api.video.shots.generateAudio(s.id);
-        if (!r.ok) window.Shell.toast(r.error || "生成配音失败", "error");
+        if (r.cancelled) window.Shell.toast("已取消配音");
+        else if (!r.ok) window.Shell.toast(r.error || "生成配音失败", "error");
         else if (r.warning) window.Shell.toast("配音已生成，但时长是估算值：" + r.warning, "error");
         else window.Shell.toast("配音已生成（实测 " + fmt(r.seconds) + "）", "success");
         await load(root, currentId);
       } catch (e) { window.Shell.toast(e.message, "error"); }
-      finally { btn.disabled = false; btn.textContent = old; }
+      finally { btn.disabled = false; btn.textContent = old; btn._cancel = null; }
     };
     const importShot = async (s0, file) => {
       const s = await ensureSaved(s0); if (!s) return;
@@ -352,19 +359,25 @@
       catch (e) { stopListen(); window.Shell.toast("音频播放失败：" + e.message, "error"); }
     };
     const generateAll = async (btn) => {
+      if (btn._cancel) return btn._cancel();
       if (isDirty() || draft.shots.some((s) => s._new)) { if (!(await save({ silent: true }))) return; }
       const ids = draft.shots.filter((s) => String(s.narration || "").trim()).map((s) => s.id);
       if (!ids.length) { window.Shell.toast("没有可生成配音的口播文案", "error"); return; }
-      const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
-      let done = 0, failed = 0;
+      const old = btn.textContent;
+      let done = 0, failed = 0, stop = false;
+      btn.textContent = "取消配音"; btn._cancel = () => { stop = true; btn.disabled = true; btn.textContent = "取消中…"; api.video.shots.cancelAudio(); };
       try {
-        for (const id of ids) {
+        for (const [k, id] of ids.entries()) {
+          if (stop) break;
+          if (!btn.disabled) btn.textContent = `取消配音（${k + 1}/${ids.length}）`;
           const r = await api.video.shots.generateAudio(id);
+          if (r.cancelled) break;
           if (r.ok) done++; else failed++;
         }
-        window.Shell.toast(failed ? `配音生成完成：成功 ${done} 镜，失败 ${failed} 镜（失败原因写在对应镜头下）` : `配音已生成 ${done} 镜`, failed ? "error" : "success");
+        if (stop) window.Shell.toast(`已取消配音，已完成 ${done} 镜`);
+        else window.Shell.toast(failed ? `配音生成完成：成功 ${done} 镜，失败 ${failed} 镜（失败原因写在对应镜头下）` : `配音已生成 ${done} 镜`, failed ? "error" : "success");
         await load(root, currentId);
-      } finally { btn.disabled = false; btn.textContent = old; }
+      } finally { btn.disabled = false; btn.textContent = old; btn._cancel = null; }
     };
 
     async function save({ silent = false } = {}) {

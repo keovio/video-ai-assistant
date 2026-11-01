@@ -80,6 +80,8 @@ contextBridge.exposeInMainWorld("app", {
       remove: (id) => ipcRenderer.invoke("video:shots.remove", id),
       reorder: (projectId, ids) => ipcRenderer.invoke("video:shots.reorder", projectId, ids),
       generateAudio: (id, override) => ipcRenderer.invoke("video:shots.generateAudio", id, override),
+      // 0.6.26：取消配音；不传 id 取消全部
+      cancelAudio: (id) => ipcRenderer.invoke("video:shots.cancelAudio", id || ""),
       importAudio: (id, file) => ipcRenderer.invoke("video:shots.importAudio", id, file),
       audioData: (id) => ipcRenderer.invoke("video:shots.audioData", id),
       clearAudio: (id) => ipcRenderer.invoke("video:shots.clearAudio", id),
