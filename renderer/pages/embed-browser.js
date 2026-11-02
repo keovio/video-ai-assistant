@@ -31,7 +31,7 @@
   function sync(e) {
     if (!e.active || !e.opened) return;
     const r = visibleRect(e.viewport);
-    const shouldShow = document.body.contains(e.viewport) && r.width >= 50 && r.height >= 50 && !modalOpen();
+    const shouldShow = document.body.contains(e.viewport) && r.width >= 50 && r.height >= 50 && !modalOpen() && !e.min && !e.dragging;
     if (shouldShow) {
       e.api.setBounds({ x: r.x, y: r.y, width: r.width, height: r.height }).catch(() => {});
       if (!e.shown) { e.shown = true; e.api.show().catch(() => {}); }
@@ -160,15 +160,65 @@
       h("div", { class: "browser-empty-title" }, `正在打开${title}…`),
       emptyText ? h("p", { class: "muted small-text" }, emptyText) : null);
     const viewport = h("div", { class: "browser-viewport", id: `${kind}-view-placeholder` }, status);
+    // 0.6.40：最小化（收成左边一条竖栏）+ 和右栏之间的拖动条
+    const minKey = `embed.min.${pageId}`;
+    const minBtn = btn("minus", "最小化浏览器", () => setMin(true));
+    const minStrip = h("button", { class: "browser-min-strip", title: `展开${title}`, onclick: () => setMin(false) }, h("span", {}, "▶"), h("span", { class: "browser-min-label" }, `展开${title}`));
     const el = h("div", { class: "browser", "data-kind": kind },
       tabStrip,
       h("div", { class: "browser-bar" }, back, fwd, reload, home,
         h("div", { class: "browser-addr-wrap" }, lock, addr, starBtn),
-        h("div", { class: "browser-zoom-group" }, zoomOut, zoomLabel, zoomIn), ext),
+        h("div", { class: "browser-zoom-group" }, zoomOut, zoomLabel, zoomIn), ext, minBtn),
       bmBar,
-      progress, viewport);
+      progress, viewport, minStrip);
 
-    const e = { kind, pageId, api, viewport, active: false, opened: false, shown: false, loading: false, url: "", title: "", opening: null };
+    const e = { kind, pageId, api, viewport, active: false, opened: false, shown: false, loading: false, url: "", title: "", opening: null, min: localStorage.getItem(minKey) === "1", dragging: false };
+    function setMin(v) {
+      e.min = !!v;
+      localStorage.setItem(minKey, e.min ? "1" : "0");
+      applyLayout();
+      if (!e.min && e.active && !e.opened && autoOpen) open();
+      schedule();
+    }
+    const sideKey = `embed.sideW.${pageId}`;
+    const resizer = h("div", { class: "wb-resizer", title: "拖动调整宽度，双击恢复" });
+    function applyLayout() {
+      const wb = el.parentElement;
+      el.classList.toggle("min", e.min);
+      if (!wb || !wb.classList.contains("workbench")) return;
+      if (resizer.parentElement !== wb) el.after(resizer);
+      wb.classList.toggle("embed-min", e.min);
+      resizer.hidden = e.min;
+      const w = Number(localStorage.getItem(sideKey));
+      if (w >= 300) wb.style.setProperty("--side-w", w + "px"); else wb.style.removeProperty("--side-w");
+    }
+    resizer.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const wb = el.parentElement;
+      if (!wb) return;
+      e.dragging = true; sync(e);
+      resizer.setPointerCapture(ev.pointerId);
+      document.body.classList.add("wb-dragging");
+      const rect = wb.getBoundingClientRect();
+      let w = 0;
+      const move = (m) => {
+        w = Math.round(Math.max(300, Math.min(rect.width - 320, rect.right - m.clientX)));
+        wb.style.setProperty("--side-w", w + "px");
+      };
+      const up = (u) => {
+        resizer.removeEventListener("pointermove", move);
+        resizer.removeEventListener("pointerup", up);
+        resizer.removeEventListener("pointercancel", up);
+        try { resizer.releasePointerCapture(u.pointerId); } catch { /* ignore */ }
+        document.body.classList.remove("wb-dragging");
+        if (w) localStorage.setItem(sideKey, String(w));
+        e.dragging = false; schedule();
+      };
+      resizer.addEventListener("pointermove", move);
+      resizer.addEventListener("pointerup", up);
+      resizer.addEventListener("pointercancel", up);
+    });
+    resizer.addEventListener("dblclick", () => { localStorage.removeItem(sideKey); applyLayout(); schedule(); });
     entries.push(e);
     if (ro) ro.observe(viewport);
 
@@ -238,7 +288,8 @@
       show() {
         e.active = true;
         e.shown = false;
-        if (!e.opened && autoOpen) open();
+        applyLayout();
+        if (!e.opened && autoOpen && !e.min) open();
         else schedule();
       },
       hide() {

@@ -409,6 +409,7 @@ function switchEmbedTab(kind, id) {
   const tab = st.tabs.find((t) => t.id === id);
   if (!tab || tab.view.webContents.isDestroyed()) return false;
   if (st.activeId === id && st.view === tab.view) return true;
+  if (tab.pendingUrl && !tab.view.webContents.getURL()) tab.view.webContents.loadURL(tab.pendingUrl).catch(() => {});
   const old = st.view;
   st.view = tab.view;
   st.activeId = id;
@@ -465,13 +466,14 @@ function setEmbedZoom(kind, factor) {
   pushEmbedState(kind);
   return z;
 }
+function hostOfUrl(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } }
 function embedState(kind) {
   const st = embeddedViews.get(kind);
   if (!st || !st.view || st.view.webContents.isDestroyed()) return { kind, opened: false, tabs: [] };
   const wc = st.view.webContents;
   const nav = wc.navigationHistory;
   const tabs = st.tabs.filter((t) => !t.view.webContents.isDestroyed()).map((t) => ({
-    id: t.id, url: t.view.webContents.getURL(), title: t.view.webContents.getTitle(), loading: t.view.webContents.isLoading(), active: t.id === st.activeId,
+    id: t.id, url: t.view.webContents.getURL() || t.pendingUrl || "", title: t.view.webContents.getTitle() || (t.pendingUrl && !t.view.webContents.getURL() ? "（未加载）" + hostOfUrl(t.pendingUrl) : ""), loading: t.view.webContents.isLoading(), active: t.id === st.activeId,
   }));
   return {
     kind, opened: st.loaded || !!wc.getURL(), url: wc.getURL() || st.url, title: wc.getTitle(), loading: wc.isLoading(), zoom: st.zoom || 1,
@@ -706,7 +708,8 @@ async function openEmbeddedView(kind, partition, url) {
       saved.urls.forEach((u, i) => {
         const tab = st.tabs[i];
         tab.pendingUrl = u;
-        if (i !== saved.active) tab.view.webContents.loadURL(u).catch(() => {});
+        // 0.6.40：其余标签先不加载，切到时才加载（设置 embedLazyTabs 可关）
+        if (i !== saved.active && settings.get("embedLazyTabs") === false) tab.view.webContents.loadURL(u).catch(() => {});
       });
       url = saved.urls[saved.active];
       st.loaded = true;

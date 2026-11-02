@@ -207,6 +207,13 @@
       h("header", { class: "dock-head" },
         h("h2", {}, "运行日志"),
         h("span", { class: "spacer" }),
+        (() => {
+          // 0.6.40：执行任务时是否自动弹出本面板
+          const cb = h("input", { type: "checkbox" });
+          cb.checked = window.Shell.getSettings().logAutoOpen !== false;
+          cb.onchange = () => window.Shell.saveSettings({ logAutoOpen: cb.checked });
+          return h("label", { class: "dock-auto small muted", title: "有任务开始时自动打开运行日志" }, cb, "任务时弹出");
+        })(),
         h("div", { class: "zoom-ctl", title: "日志字号（Ctrl/⌘ + 滚轮）" },
           iconBtn("minus", "缩小字号", () => bumpFont(-1)),
           h("span", { id: "logdock-size", class: "small muted" }, String(window.Shell.getSettings().logFontSize || 12)),

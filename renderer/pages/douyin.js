@@ -285,7 +285,7 @@
       panel.append(buildResultCard(root, d));
     }
 
-    panel.append(buildSavedCard(root));
+    // 0.6.40：已保存的分析不在这里列了，去作品库看
     refreshAiStatus(root).catch(() => {});
     refreshSavedList(root).catch(() => {});
   }
@@ -529,7 +529,7 @@
     }
     busy = true;
     refreshAiStatus(root).catch(() => {});
-    if (window.Shell.toggleLogDock) { try { window.Shell.toggleLogDock(true); } catch { /* ignore */ } }
+    if (window.Shell.toggleLogDock && window.Shell.getSettings().logAutoOpen !== false) { try { window.Shell.toggleLogDock(true); } catch { /* ignore */ } }
     setProgress(root, mode === "extract" && viewOpened() ? "正在截取画面并请求 AI 分析，通常要 20–90 秒" : "正在请求 AI 分析，通常要 20–60 秒");
     try {
       // “分析当前视频”时顺带截几帧画面给 AI 看（视图开着时）；手动分析不截图

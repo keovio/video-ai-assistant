@@ -253,8 +253,40 @@
   }
 
   // 0.6.36 原视频卡片：分析时下载/录制的视频文件
+  // 0.6.40：原视频卡片：封面 + 直接分析
+  const srcThumbs = new Map();
+  const analyzing = new Set();
   function sourceCard(root, x) {
-    return h("div", { class: "lib-card lib-analysis", onclick: () => call(api.video.library.openSource(x.name)) },
+    const cover = h("div", { class: "lib-thumb playable", title: "播放原视频", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name)); } });
+    const paint = (t) => {
+      cover.textContent = "";
+      cover.append(t && t.thumb ? h("img", { src: t.thumb, alt: "" }) : h("span", { class: "lib-thumb-ph" }, "🎞"));
+      if (t && t.seconds) cover.append(h("span", { class: "lib-dur" }, fmtDur(t.seconds)));
+      cover.append(h("span", { class: "lib-play" }, "▶"));
+    };
+    paint(srcThumbs.get(x.name));
+    if (!srcThumbs.has(x.name) && api.video.library.sourceThumb) {
+      api.video.library.sourceThumb(x.name).then((r) => {
+        const t = r && r.ok ? { thumb: r.thumb || "", seconds: r.seconds || 0 } : { thumb: "", seconds: 0 };
+        srcThumbs.set(x.name, t); if (cover.isConnected) paint(t);
+      }).catch(() => srcThumbs.set(x.name, { thumb: "", seconds: 0 }));
+    }
+    const busy = analyzing.has(x.name);
+    const analyzeBtn = h("button", { class: "btn small primary", disabled: busy, onclick: async (e) => {
+      e.stopPropagation();
+      analyzing.add(x.name); analyzeBtn.disabled = true; analyzeBtn.textContent = "分析中…";
+      window.Shell.toast("开始分析原视频，进度看右侧运行日志");
+      try {
+        const r = await api.video.library.analyzeSource(x.name);
+        if (r && r.ok) {
+          window.Shell.toast("分析完成", "success");
+          const id = r.record && r.record.id;
+          if (id && window.VideoAnalysis) window.VideoAnalysis.open(id); else load(root);
+        } else if (!(r && r.code === "TASK_CANCELLED")) window.Shell.toast("分析失败：" + ((r && r.error) || "未知错误"), "error");
+      } finally { analyzing.delete(x.name); if (analyzeBtn.isConnected) { analyzeBtn.disabled = false; analyzeBtn.textContent = x.analysisId ? "重新分析" : "分析"; } }
+    } }, busy ? "分析中…" : x.analysisId ? "重新分析" : "分析");
+    return h("div", { class: "lib-card lib-source" },
+      cover,
       h("div", { class: "lib-card-body" },
         h("div", { class: "lib-card-meta" },
           h("span", { class: "chip" }, /\.webm$/i.test(x.name) ? "录制" : "下载"),
@@ -263,13 +295,13 @@
         h("div", { class: "lib-card-title two-line", title: x.title }, x.title),
         h("div", { class: "lib-card-meta" }, fmtWhen(x.createdAt)),
         h("div", { class: "lib-actions" },
-          h("button", { class: "btn small primary", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name)); } }, "播放"),
-          h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name, true)); } }, "文件夹"),
+          analyzeBtn,
           x.analysisId ? h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); window.VideoAnalysis && window.VideoAnalysis.open(x.analysisId); } }, "看分析") : null,
+          h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name, true)); } }, "文件夹"),
           h("button", { class: "btn small danger-ghost", onclick: async (e) => {
             e.stopPropagation();
             if (!await window.Shell.confirm(`确定删除这个原视频文件吗？`)) return;
-            if (await call(api.video.library.removeSource(x.name))) { window.Shell.toast("已删除"); load(root); }
+            if (await call(api.video.library.removeSource(x.name))) { window.Shell.toast("已删除"); srcThumbs.delete(x.name); load(root); }
           } }, "删除"))));
   }
 
