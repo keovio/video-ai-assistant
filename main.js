@@ -770,7 +770,84 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
 
 // 0.6.31：下载分析浏览器里正在播放的原视频，存到 data/video/sources，供 AI 直接看视频、也进作品库。
 // 只能下载有直链的视频（抖音多数是直链）；分段流（blob:，B 站/YouTube 常见）返回错误，调用方退回截图。
-async function downloadEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}) {
+// 0.6.33：直链/抓地址都失败时的兜底：在页面里把正在播放的视频从头录一遍（captureStream + MediaRecorder，
+// 画面和声音都有，按原速录，所以只录 3 分钟以内的视频），再用 ffmpeg 转成 mp4。
+async function recordEmbeddedVideo(wc, dir, safe, maxSec = 180) {
+  const start = await withTimeout(wc.executeJavaScript(`new Promise((res) => {
+    const v = [...document.querySelectorAll("video")].sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];
+    if (!v) return res({ error: "页面上没找到视频" });
+    const dur = isFinite(v.duration) ? v.duration : 0;
+    if (!dur) return res({ error: "读不到视频时长" });
+    if (dur > ${maxSec}) return res({ error: "视频超过 ${maxSec / 60} 分钟，不录制" });
+    let stream;
+    try { stream = (v.captureStream || v.mozCaptureStream).call(v); } catch (e) { return res({ error: "页面不允许录制：" + e.message }); }
+    const type = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+    const rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 4000000 } : undefined);
+    const chunks = [];
+    window.__harkRec = { done: false, error: "", b64: "" };
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      try {
+        const buf = new Uint8Array(await new Blob(chunks, { type: "video/webm" }).arrayBuffer());
+        let s = ""; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode.apply(null, buf.subarray(i, i + 32768));
+        window.__harkRec.b64 = btoa(s);
+      } catch (e) { window.__harkRec.error = e.message; }
+      window.__harkRec.done = true;
+    };
+    const wasLoop = v.loop; v.loop = false; v.playbackRate = 1;
+    v.currentTime = 0;
+    const stop = () => { v.removeEventListener("ended", stop); v.loop = wasLoop; if (rec.state !== "inactive") rec.stop(); };
+    v.addEventListener("ended", stop);
+    setTimeout(stop, (dur + 3) * 1000);
+    rec.start(1000);
+    Promise.resolve(v.play()).catch(() => {});
+    res({ dur });
+  })`), 8000, "开始录制视频");
+  if (!start || start.error) throw new Error((start && start.error) || "录制没有开始");
+  const deadline = Date.now() + (start.dur + 30) * 1000;
+  let state = null;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1000));
+    state = await wc.executeJavaScript("window.__harkRec ? { done: window.__harkRec.done, error: window.__harkRec.error, n: window.__harkRec.b64.length } : null").catch(() => null);
+    if (state && state.done) break;
+  }
+  if (!state || !state.done) throw new Error("录制超时");
+  if (state.error || !state.n) throw new Error("录制失败：" + (state.error || "没有录到内容"));
+  const parts = [];
+  for (let i = 0; i < state.n; i += 4 * 1024 * 1024) parts.push(await wc.executeJavaScript(`window.__harkRec.b64.slice(${i}, ${i + 4 * 1024 * 1024})`));
+  await wc.executeJavaScript("window.__harkRec = null").catch(() => {});
+  const webm = path.join(dir, `${Date.now()}-${safe}.webm`);
+  fs.writeFileSync(webm, Buffer.from(parts.join(""), "base64"));
+  const mp4 = webm.replace(/\.webm$/, ".mp4");
+  try {
+    await require("./lib/video/render").defaultRun(["-y", "-i", webm, "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", mp4]);
+    try { fs.unlinkSync(webm); } catch { /* ignore */ }
+    return { abs: mp4, mime: "video/mp4" };
+  } catch (err) {
+    log.warn("录制的视频转 mp4 失败，保留 webm：" + ((err && err.message) || err));
+    return { abs: webm, mime: "video/webm" };
+  }
+}
+
+async function downloadEmbeddedVideo(kind, opts = {}) {
+  const st = embeddedViews.get(kind);
+  if (!st || !st.loaded || st.view.webContents.isDestroyed()) throw new Error("分析浏览器没有打开视频");
+  try { return await fetchEmbeddedVideo(kind, opts); }
+  catch (err) {
+    const wc = st.view.webContents;
+    log.warn(`直接下载原视频失败（${(err && err.message) || err}），改为录制播放中的视频…`);
+    const dir = path.join(videoDir, "sources");
+    fs.mkdirSync(dir, { recursive: true });
+    const title = await wc.executeJavaScript("document.title").catch(() => "video");
+    const safe = String(title || "video").replace(/[\\/:*?"<>|\s#]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "video";
+    const r = await recordEmbeddedVideo(wc, dir, safe);
+    const bytes = fs.statSync(r.abs).size;
+    log.info(`已录下原视频（${(bytes / 1048576).toFixed(1)} MB）`);
+    return { path: r.abs, rel: path.relative(videoDir, r.abs).split(path.sep).join("/"), bytes, mime: r.mime, recorded: true };
+  }
+}
+
+async function fetchEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}) {
   const st = embeddedViews.get(kind);
   if (!st || !st.loaded || st.view.webContents.isDestroyed()) throw new Error("分析浏览器没有打开视频");
   const wc = st.view.webContents;
