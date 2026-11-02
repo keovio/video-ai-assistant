@@ -142,6 +142,9 @@ contextBridge.exposeInMainWorld("app", {
     library: {
       renders: () => ipcRenderer.invoke("video:library.renders"),
       thumb: (renderId) => ipcRenderer.invoke("video:library.thumb", renderId),
+      sources: () => ipcRenderer.invoke("video:library.sources"),
+      openSource: (name, reveal) => ipcRenderer.invoke("video:library.openSource", name, !!reveal),
+      removeSource: (name) => ipcRenderer.invoke("video:library.removeSource", name),
     },
     analyses: {
       list: () => ipcRenderer.invoke("video:analyses.list"),

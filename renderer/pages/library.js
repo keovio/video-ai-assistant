@@ -8,10 +8,10 @@
   const PREVIEW = 8; // “全部”视图每类先显示几条
   const PAGE = 24;
 
-  const state = { tab: "all", q: "", renders: [], analyses: [], limit: { renders: PAGE, analyses: PAGE, skills: PAGE }, loading: false, error: "",
+  const state = { tab: "all", q: "", renders: [], analyses: [], sources: [], limit: { renders: PAGE, analyses: PAGE, skills: PAGE, sources: PAGE }, loading: false, error: "",
     sort: localStorage.getItem("library.sort") || "new", range: localStorage.getItem("library.range") || "all" };
   // 0.6.23：其他页面跳过来时指定分类（例如分析页“在作品库查看” skill）
-  window.Library = { showTab(tab) { if (["all", "renders", "analyses", "skills"].includes(tab)) { state.tab = tab; state.q = ""; } } };
+  window.Library = { showTab(tab) { if (["all", "renders", "analyses", "skills", "sources"].includes(tab)) { state.tab = tab; state.q = ""; } } };
   const thumbs = new Map(); // renderId -> { thumb, seconds }
   let observer = null;
 
@@ -78,7 +78,9 @@
   async function load(root) {
     state.loading = true;
     try {
-      const [r, a] = await Promise.all([api.video.library.renders(), api.video.analyses.list()]);
+      const [r, a, sv] = await Promise.all([api.video.library.renders(), api.video.analyses.list(),
+        api.video.library.sources ? api.video.library.sources() : Promise.resolve({ ok: true, sources: [] })]);
+      state.sources = (sv && sv.ok && sv.sources) || [];
       if (!r.ok) throw new Error(r.error || "读取成片失败");
       if (!a.ok) throw new Error(a.error || "读取分析失败");
       state.renders = r.renders || [];
@@ -100,7 +102,7 @@
     const tabBtn = (id, label, n) => h("button", { class: state.tab === id ? "active" : "", onclick: () => { state.tab = id; draw(root); } },
       label + (n != null ? ` ${n}` : ""));
     const search = h("input", { class: "input lib-search", type: "search", placeholder: "搜索项目名、分析标题、作者、链接", value: state.q,
-      oninput: (e) => { state.q = e.target.value; state.limit = { renders: PAGE, analyses: PAGE, skills: PAGE }; drawResults(root); } });
+      oninput: (e) => { state.q = e.target.value; state.limit = { renders: PAGE, analyses: PAGE, skills: PAGE, sources: PAGE }; drawResults(root); } });
 
     body.textContent = "";
     body.append(
@@ -109,7 +111,7 @@
         h("button", { class: "btn", onclick: () => load(root) }, "刷新")),
       h("div", { class: "lib-toolbar" },
         h("div", { class: "segmented" },
-          tabBtn("all", "全部"), tabBtn("renders", "成片", state.renders.length), tabBtn("analyses", "分析", state.analyses.length), tabBtn("skills", "风格 skill", state.analyses.filter((a) => a.skillPath).length)),
+          tabBtn("all", "全部"), tabBtn("renders", "成片", state.renders.length), tabBtn("analyses", "分析", state.analyses.length), tabBtn("skills", "风格 skill", state.analyses.filter((a) => a.skillPath).length), tabBtn("sources", "原视频", state.sources.length)),
         search,
         h("select", { class: "input lib-select", title: "时间范围", value: state.range, onchange: (e) => { state.range = e.target.value; localStorage.setItem("library.range", state.range); drawResults(root); } },
           ...RANGES.map(([v, l]) => h("option", { value: v }, l))),
@@ -138,6 +140,9 @@
       state.analyses.length ? "没有匹配的分析。" : "还没有保存的分析。在“视频分析”里分析一条视频并保存。"));
     if (show("skills")) body.append(section(root, "skills", "风格 skill", skills, skillCard,
       state.analyses.some((a) => a.skillPath) ? "没有匹配的 skill。" : "还没有保存的 skill。在“视频分析”结果的“风格 skill”里点“保存 skill 文件”。"));
+    const sources = byTime(state.sources).filter((x) => has(q, x.title, x.name, x.sourceUrl));
+    if (show("sources")) body.append(section(root, "sources", "原视频", sources, sourceCard,
+      state.sources.length ? "没有匹配的原视频。" : "还没有原视频。分析视频时会自动下载原视频，存到这里。"));
   }
 
   function section(root, kind, title, items, cardFn, emptyText) {
@@ -244,6 +249,27 @@
             e.stopPropagation();
             if (!await window.Shell.confirm(`确定删除这条分析“${title}”吗？`)) return;
             if (await call(api.video.analyses.remove(a.id))) { window.Shell.toast("已删除"); load(root); }
+          } }, "删除"))));
+  }
+
+  // 0.6.36 原视频卡片：分析时下载/录制的视频文件
+  function sourceCard(root, x) {
+    return h("div", { class: "lib-card lib-analysis", onclick: () => call(api.video.library.openSource(x.name)) },
+      h("div", { class: "lib-card-body" },
+        h("div", { class: "lib-card-meta" },
+          h("span", { class: "chip" }, /\.webm$/i.test(x.name) ? "录制" : "下载"),
+          x.sizeBytes ? h("span", { class: "chip" }, fmtSize(x.sizeBytes)) : null,
+          x.analysisId ? h("span", { class: "chip ok" }, "已分析") : null),
+        h("div", { class: "lib-card-title two-line", title: x.title }, x.title),
+        h("div", { class: "lib-card-meta" }, fmtWhen(x.createdAt)),
+        h("div", { class: "lib-actions" },
+          h("button", { class: "btn small primary", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name)); } }, "播放"),
+          h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name, true)); } }, "文件夹"),
+          x.analysisId ? h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); window.VideoAnalysis && window.VideoAnalysis.open(x.analysisId); } }, "看分析") : null,
+          h("button", { class: "btn small danger-ghost", onclick: async (e) => {
+            e.stopPropagation();
+            if (!await window.Shell.confirm(`确定删除这个原视频文件吗？`)) return;
+            if (await call(api.video.library.removeSource(x.name))) { window.Shell.toast("已删除"); load(root); }
           } }, "删除"))));
   }
 
