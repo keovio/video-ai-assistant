@@ -436,6 +436,27 @@
         h("div", { class: "split-right" }, detailBox)));
 
     // 0.6.24：AI 优化 / 模仿写法改写画面提示词：先预览，确认后才替换
+    // 逐字对比（LCS），返回 [[0|1|-1, 文本], …]；太长时退化为整段替换
+    function diffText(a, b) {
+      a = String(a || ""); b = String(b || "");
+      if (a === b) return a ? [[0, a]] : [];
+      if (a.length * b.length > 4000000) return [[-1, a], [1, b]].filter((p) => p[1]);
+      const n = a.length, m = b.length, w = m + 1;
+      const L = new Uint16Array((n + 1) * w);
+      for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+        L[i * w + j] = a[i] === b[j] ? L[(i + 1) * w + j + 1] + 1 : Math.max(L[(i + 1) * w + j], L[i * w + j + 1]);
+      const out = [];
+      const push = (op, ch) => { const last = out[out.length - 1]; if (last && last[0] === op) last[1] += ch; else out.push([op, ch]); };
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { push(0, a[i]); i++; j++; }
+        else if (L[(i + 1) * w + j] >= L[i * w + j + 1]) push(-1, a[i++]);
+        else push(1, b[j++]);
+      }
+      while (i < n) push(-1, a[i++]);
+      while (j < m) push(1, b[j++]);
+      return out;
+    }
     async function openRewrite(idxs) {
       const api = window.app;
       const skills = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath);
@@ -458,7 +479,7 @@
       const applyBtn = h("button", { class: "btn primary", hidden: true }, "全部替换");
       const close = () => overlay.remove();
       const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
-        h("div", { class: "modal modal-form modal-wide", role: "dialog" },
+        h("div", { class: "modal modal-form modal-wide modal-rewrite", role: "dialog" },
           h("h2", {}, "AI 优化提示词"), mode, skillField, refField, status, result,
           h("div", { class: "actions end" }, h("button", { class: "btn", onclick: close }, "取消"), runBtn, applyBtn)));
       document.body.append(overlay);
@@ -484,11 +505,27 @@
         if (!r || !r.ok) { status.textContent = "改写失败：" + ((r && r.error) || "未知错误"); return; }
         out = r.prompts;
         status.textContent = `改写完成（${((Date.now() - t0) / 1000).toFixed(0)} 秒），可以逐条修改，确认后替换`;
+        // 0.6.37：优化前 / 优化后并排，下面一栏标出改动（绿色=新增，红色划线=删掉），改右边时实时更新
         result.replaceChildren(...idxs.map((k, j) => {
-          const ta = h("textarea", { class: "input", rows: 3 }); ta.value = out[j] || "";
-          ta.oninput = () => { out[j] = ta.value; };
           const old = draft.shots[k].imagePrompt || draft.shots[k].visual || "";
-          return h("div", { class: "rewrite-item" }, h("b", {}, `第 ${k + 1} 镜`), h("div", { class: "muted small-text rewrite-old", title: old }, "原：" + (old || "（空）")), ta);
+          const ta = h("textarea", { class: "input", rows: 5 }); ta.value = out[j] || "";
+          const diffBox = h("div", { class: "rewrite-diff" });
+          const stat = h("span", { class: "muted small-text" });
+          const paint = () => {
+            const parts = diffText(old, ta.value);
+            diffBox.replaceChildren(...parts.map(([op, t]) => op === 0 ? document.createTextNode(t) : h(op > 0 ? "ins" : "del", {}, t)));
+            const add = parts.filter((p) => p[0] > 0).reduce((n, p) => n + p[1].length, 0);
+            const del = parts.filter((p) => p[0] < 0).reduce((n, p) => n + p[1].length, 0);
+            stat.textContent = `${old.length} 字 → ${ta.value.length} 字，新增 ${add} 字，删掉 ${del} 字`;
+          };
+          ta.oninput = () => { out[j] = ta.value; paint(); };
+          paint();
+          return h("div", { class: "rewrite-item" },
+            h("div", { class: "rewrite-head" }, h("b", {}, `第 ${k + 1} 镜`), stat),
+            h("div", { class: "rewrite-cols" },
+              h("div", {}, h("div", { class: "muted small-text" }, "优化前"), h("div", { class: "rewrite-old" }, old || "（空）")),
+              h("div", {}, h("div", { class: "muted small-text" }, "优化后（可修改）"), ta)),
+            h("details", { class: "rewrite-diff-wrap", open: true }, h("summary", { class: "muted small-text" }, "改动对比"), diffBox));
         }));
         runBtn.textContent = "重新改写"; applyBtn.hidden = false;
       };

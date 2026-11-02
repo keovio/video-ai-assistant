@@ -709,4 +709,13 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .modal-wide { width: min(680px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; }
 .rewrite-list { display: flex; flex-direction: column; gap: 12px; }
 .rewrite-item { display: flex; flex-direction: column; gap: 4px; }
-.rewrite-old { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rewrite-head { display: flex; align-items: baseline; gap: 10px; }
+.rewrite-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rewrite-cols > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rewrite-old { white-space: pre-wrap; font-size: 13px; line-height: 1.5; padding: 6px 8px; border-radius: 6px; background: rgba(127,127,127,.08); max-height: 140px; overflow: auto; }
+.rewrite-cols textarea { min-height: 110px; }
+.rewrite-diff { white-space: pre-wrap; font-size: 13px; line-height: 1.6; padding: 6px 8px; border-radius: 6px; background: rgba(127,127,127,.06); max-height: 160px; overflow: auto; }
+.rewrite-diff ins { background: rgba(46,160,67,.22); text-decoration: none; }
+.rewrite-diff del { background: rgba(248,81,73,.18); color: var(--muted, #888); }
+
+.modal.modal-rewrite { width: min(980px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; }
