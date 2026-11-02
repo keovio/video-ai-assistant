@@ -438,7 +438,7 @@
     // 0.6.24：AI 优化 / 模仿写法改写画面提示词：先预览，确认后才替换
     async function openRewrite(idxs) {
       const api = window.app;
-      const skills = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath || a.skillText);
+      const skills = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath);
       const SS = window.StyleSkill;
       const mode = h("select", { class: "input" },
         h("option", { value: "optimize" }, "优化：改成更适合生视频网站的写法"),
