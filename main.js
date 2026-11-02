@@ -269,6 +269,34 @@ function hookGoogleHeaders(sess) {
     });
   } catch (err) { log.warn("Google 登录兼容设置失败：" + err.message); }
 }
+// 0.6.32：抖音等站用分段流（blob:）播放，页面上拿不到直链。记下每个标签页最近请求过的
+// 视频/音频地址（看响应类型或地址特征），下载原视频时用。
+const mediaSeen = new Map(); // webContentsId -> [{ url, kind: "video"|"audio"|"av", t }]
+function hookMediaSniff(sess) {
+  if (!sess || sess.__mediaSniffed) return;
+  sess.__mediaSniffed = true;
+  try {
+    sess.webRequest.onResponseStarted({ urls: ["https://*/*", "http://*/*"] }, (d) => {
+      if (!d.webContentsId || d.method !== "GET" || !(d.statusCode >= 200 && d.statusCode < 300)) return;
+      const h = d.responseHeaders || {};
+      const ct = String((h["content-type"] || h["Content-Type"] || [""])[0] || "").toLowerCase();
+      const u = d.url;
+      let kind = "";
+      if (/media-audio|mime_type=audio/i.test(u) || /^audio\//.test(ct)) kind = "audio";
+      else if (/media-video|mime_type=video/i.test(u)) kind = "video";
+      else if (/^video\//.test(ct) || /douyinvod\.com|\/video\/tos\//i.test(u)) kind = "av";
+      if (!kind || /\.m3u8|\.ts(\?|$)|\.m4s(\?|$)/i.test(u) && kind === "av") return;
+      const arr = mediaSeen.get(d.webContentsId) || [];
+      const base = u.replace(/([?&])(range|bytes)=[^&]*/gi, "$1");
+      const i = arr.findIndex((x) => x.url === base);
+      if (i >= 0) arr.splice(i, 1);
+      arr.push({ url: base, kind, t: Date.now() });
+      while (arr.length > 30) arr.shift();
+      mediaSeen.set(d.webContentsId, arr);
+    });
+  } catch (err) { log.warn("视频地址监听设置失败：" + err.message); }
+}
+
 function hookAuthUa(wc) {
   wc.on("did-start-navigation", (details, legacyUrl, _inPlace, legacyMain) => {
     // Electron 新版：details.url / details.isMainFrame；旧版：(event, url, isInPlace, isMainFrame)
@@ -336,6 +364,8 @@ function createTabView(kind, partition) {
   });
   hookAuthUa(view.webContents);
   hookGoogleHeaders(view.webContents.session);
+  hookMediaSniff(view.webContents.session);
+  view.webContents.on("did-navigate", () => mediaSeen.delete(view.webContents.id));
   const push = () => pushEmbedState(kind);
   // 页面缩放：跨站跳转后 Chromium 会重置，按本类视图记住的比例重新套上
   view.webContents.on("did-navigate", () => {
@@ -751,19 +781,45 @@ async function downloadEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}
     return { src: c[0] || "", blob: /^blob:/i.test(v.currentSrc || v.src || ""), page: location.href, title: document.title };
   })()`), 3000, "读取视频地址");
   if (!info) throw new Error("页面上没找到视频");
-  if (!info.src) throw new Error(info.blob ? "这个视频是分段流播放，不能直接下载" : "读不到视频地址");
-  const res = await withTimeout(wc.session.fetch(info.src, { headers: { Referer: info.page, "User-Agent": wc.getUserAgent() } }), 30000, "连接视频地址");
-  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
-  const len = Number(res.headers.get("content-length")) || 0;
-  if (len > maxBytes) throw new Error(`视频太大（${(len / 1048576).toFixed(0)} MB）`);
-  const buf = Buffer.from(await withTimeout(res.arrayBuffer(), 180000, "下载视频"));
-  if (buf.length < 10240) throw new Error("下载到的不是完整视频");
+  const headers = { Referer: info.page, "User-Agent": wc.getUserAgent() };
+  const fetchAll = async (url, label) => {
+    const res = await withTimeout(wc.session.fetch(url, { headers }), 30000, "连接" + label);
+    if (!res.ok) throw new Error(`${label}下载失败 HTTP ${res.status}`);
+    const len = Number(res.headers.get("content-length")) || 0;
+    if (len > maxBytes) throw new Error(`视频太大（${(len / 1048576).toFixed(0)} MB）`);
+    const buf = Buffer.from(await withTimeout(res.arrayBuffer(), 180000, "下载" + label));
+    if (buf.length < 10240) throw new Error(`下载到的${label}不完整`);
+    return { buf, mime: String(res.headers.get("content-type") || "").split(";")[0] };
+  };
+  // 有直链就直接下；分段流就用这个标签页最近请求过的视频/音频地址（视频和音频分开时下两路再合并）
+  let videoPart = null, audioPart = null;
+  if (info.src) videoPart = await fetchAll(info.src, "视频");
+  else {
+    // 信息流会预加载下一条视频：地址里带当前作品 ID 的优先
+    const vid = (String(info.page).match(/(?:\/video\/|modal_id=|aweme_id=)(\d{6,})/) || [])[1] || "";
+    const all = (mediaSeen.get(wc.id) || []).slice().reverse();
+    const mine = vid ? all.filter((x) => x.url.includes(vid)) : [];
+    const seen = mine.length ? mine : all;
+    const av = seen.find((x) => x.kind === "av");
+    const vOnly = seen.find((x) => x.kind === "video");
+    const aOnly = seen.find((x) => x.kind === "audio");
+    if (vOnly) { videoPart = await fetchAll(vOnly.url, "视频"); if (aOnly) { try { audioPart = await fetchAll(aOnly.url, "音频"); } catch { audioPart = null; } } }
+    else if (av) videoPart = await fetchAll(av.url, "视频");
+    else throw new Error(info.blob ? "这个视频是分段流播放，还没抓到视频地址（让视频播放几秒再分析）" : "读不到视频地址");
+  }
   const dir = path.join(videoDir, "sources");
   fs.mkdirSync(dir, { recursive: true });
   const safe = String(info.title || "video").replace(/[\\/:*?"<>|\s#]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "video";
   const abs = path.join(dir, `${Date.now()}-${safe}.mp4`);
-  fs.writeFileSync(abs, buf);
-  return { path: abs, rel: path.relative(videoDir, abs).split(path.sep).join("/"), bytes: buf.length, mime: String(res.headers.get("content-type") || "video/mp4").split(";")[0] };
+  if (audioPart) {
+    const vTmp = abs + ".v.mp4", aTmp = abs + ".a.m4a";
+    fs.writeFileSync(vTmp, videoPart.buf); fs.writeFileSync(aTmp, audioPart.buf);
+    try { await require("./lib/video/render").defaultRun(["-y", "-i", vTmp, "-i", aTmp, "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-movflags", "+faststart", abs]); }
+    catch (err) { log.warn("合并音视频失败，只保存画面：" + ((err && err.message) || err)); fs.copyFileSync(vTmp, abs); }
+    for (const f of [vTmp, aTmp]) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+  } else fs.writeFileSync(abs, videoPart.buf);
+  const bytes = fs.statSync(abs).size;
+  return { path: abs, rel: path.relative(videoDir, abs).split(path.sep).join("/"), bytes, mime: "video/mp4" };
 }
 
 const JIMENG_EMBED_URL = "https://jimeng.jianying.com";
