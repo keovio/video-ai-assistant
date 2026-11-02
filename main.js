@@ -344,7 +344,8 @@ function saveAllEmbedTabs() { for (const kind of embeddedViews.keys()) { clearTi
 let tabSeq = 0;
 function createTabView(kind, partition) {
   const view = new ViewClass({
-    webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true,
+      ...(kind === "douyin" ? { preload: path.join(__dirname, "lib", "embed-media-preload.js") } : {}) },
   });
   // 站内“新标签页打开”的链接：像浏览器一样开一个新标签
   view.webContents.setWindowOpenHandler(({ url: u }) => {
@@ -868,9 +869,35 @@ async function fetchEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}) {
     if (buf.length < 10240) throw new Error(`下载到的${label}不完整`);
     return { buf, mime: String(res.headers.get("content-type") || "").split(";")[0] };
   };
-  // 有直链就直接下；分段流就用这个标签页最近请求过的视频/音频地址（视频和音频分开时下两路再合并）
+  // 0.6.34：先用页面接口数据里的原视频地址（预加载脚本记下的，和油猴脚本同样的来源）
   let videoPart = null, audioPart = null;
-  if (info.src) videoPart = await fetchAll(info.src, "视频");
+  const fromApi = await wc.executeJavaScript(`(() => {
+    try {
+      const walk = window.__harkMediaWalk;
+      if (walk) {
+        const rd = document.getElementById("RENDER_DATA");
+        if (rd) { try { walk(JSON.parse(decodeURIComponent(rd.textContent || "")), 0); } catch (e) {} }
+        const ud = document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
+        if (ud) { try { walk(JSON.parse(ud.textContent || ""), 0); } catch (e) {} }
+        try { if (window.SIGI_STATE) walk(window.SIGI_STATE, 0); } catch (e) {}
+      }
+      const M = window.__harkMedia || {};
+      const href = location.href;
+      let id = (href.match(/(?:\\/video\\/|modal_id=|aweme_id=|item_id=)(\\d{6,})/) || [])[1] || "";
+      if (!id) { const el = document.querySelector('[data-e2e="feed-active-video"]'); id = (el && el.getAttribute("data-e2e-vid")) || ""; }
+      return { id, urls: (M[id] && M[id].urls) || [], known: Object.keys(M).length };
+    } catch (e) { return { id: "", urls: [], known: 0, error: e.message }; }
+  })()`).catch(() => null);
+  if (fromApi && fromApi.urls.length) {
+    for (const u of fromApi.urls.slice(0, 6)) {
+      try { videoPart = await fetchAll(u, "视频"); break; } catch (err) { log.warn(`接口地址下载失败：${(err && err.message) || err}`); }
+    }
+  } else if (fromApi) {
+    log.info(`页面接口数据里没找到当前视频地址（作品 ID ${fromApi.id || "未识别"}，已记下 ${fromApi.known} 条）`);
+  }
+  // 再试 <video> 直链；分段流就用这个标签页最近请求过的视频/音频地址（视频和音频分开时下两路再合并）
+  if (videoPart) { /* 已下好 */ }
+  else if (info.src) videoPart = await fetchAll(info.src, "视频");
   else {
     // 信息流会预加载下一条视频：地址里带当前作品 ID 的优先
     const vid = (String(info.page).match(/(?:\/video\/|modal_id=|aweme_id=)(\d{6,})/) || [])[1] || "";
