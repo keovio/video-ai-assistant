@@ -738,6 +738,34 @@ async function captureEmbeddedFrames(kind, { count = 3, intervalMs = 1500 } = {}
   return out;
 }
 
+// 0.6.31：下载分析浏览器里正在播放的原视频，存到 data/video/sources，供 AI 直接看视频、也进作品库。
+// 只能下载有直链的视频（抖音多数是直链）；分段流（blob:，B 站/YouTube 常见）返回错误，调用方退回截图。
+async function downloadEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}) {
+  const st = embeddedViews.get(kind);
+  if (!st || !st.loaded || st.view.webContents.isDestroyed()) throw new Error("分析浏览器没有打开视频");
+  const wc = st.view.webContents;
+  const info = await withTimeout(wc.executeJavaScript(`(() => {
+    const v = [...document.querySelectorAll("video")].sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];
+    if (!v) return null;
+    const c = [v.currentSrc, v.src, ...[...v.querySelectorAll("source")].map((s) => s.src)].filter((u) => /^https?:/i.test(u || ""));
+    return { src: c[0] || "", blob: /^blob:/i.test(v.currentSrc || v.src || ""), page: location.href, title: document.title };
+  })()`), 3000, "读取视频地址");
+  if (!info) throw new Error("页面上没找到视频");
+  if (!info.src) throw new Error(info.blob ? "这个视频是分段流播放，不能直接下载" : "读不到视频地址");
+  const res = await withTimeout(wc.session.fetch(info.src, { headers: { Referer: info.page, "User-Agent": wc.getUserAgent() } }), 30000, "连接视频地址");
+  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
+  const len = Number(res.headers.get("content-length")) || 0;
+  if (len > maxBytes) throw new Error(`视频太大（${(len / 1048576).toFixed(0)} MB）`);
+  const buf = Buffer.from(await withTimeout(res.arrayBuffer(), 180000, "下载视频"));
+  if (buf.length < 10240) throw new Error("下载到的不是完整视频");
+  const dir = path.join(videoDir, "sources");
+  fs.mkdirSync(dir, { recursive: true });
+  const safe = String(info.title || "video").replace(/[\\/:*?"<>|\s#]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "video";
+  const abs = path.join(dir, `${Date.now()}-${safe}.mp4`);
+  fs.writeFileSync(abs, buf);
+  return { path: abs, rel: path.relative(videoDir, abs).split(path.sep).join("/"), bytes: buf.length, mime: String(res.headers.get("content-type") || "video/mp4").split(";")[0] };
+}
+
 const JIMENG_EMBED_URL = "https://jimeng.jianying.com";
 const DOUYIN_EMBED_URL = "https://www.douyin.com";
 const embeddedViewsApi = {
@@ -756,6 +784,7 @@ const embeddedViewsApi = {
     setBounds: (rect) => setEmbeddedViewBounds("douyin", rect),
     surface: () => embeddedSurface("douyin", "persist:douyin", DOUYIN_EMBED_URL),
     captureFrames: (opts) => captureEmbeddedFrames("douyin", opts),
+    downloadVideo: (opts) => downloadEmbeddedVideo("douyin", opts),
     url: DOUYIN_EMBED_URL,
   },
 };
@@ -801,6 +830,7 @@ setupVideoIpc({
   ipcMain, store: videoStore, videoDir,
   embeddedViews: embeddedViewsApi,
   openPath: (p) => { try { shell.openPath(p); } catch { /* ignore */ } return true; },
+  revealPath: (p) => { try { shell.showItemInFolder(p); } catch { /* ignore */ } return true; },
   videoDefaults: () => ({ defaultShotCount: settings.get("videoDefaultShotCount"), aspect: settings.get("videoAspect") }),
   getTtsSettings: () => ({
     ttsProvider: settings.get("ttsProvider"), ttsVoice: settings.get("ttsVoice"), ttsRate: settings.get("ttsRate"),

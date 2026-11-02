@@ -152,6 +152,7 @@ contextBridge.exposeInMainWorld("app", {
       openSkill: (id) => ipcRenderer.invoke("video:analyses.openSkill", id),
       removeSkill: (id) => ipcRenderer.invoke("video:analyses.removeSkill", id),
       import: (id) => ipcRenderer.invoke("video:analyses.import", id),
+      openVideo: (id, reveal) => ipcRenderer.invoke("video:analyses.openVideo", id, !!reveal),
     },
     tts: { providers: () => ipcRenderer.invoke("video:tts.providers") },
     backups: {

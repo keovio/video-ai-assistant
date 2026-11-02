@@ -225,6 +225,7 @@
           h("span", { class: "chip" }, SITE[a.site] || "网页"),
           shots ? h("span", { class: "chip" }, `${shots} 镜`) : null,
           a.skillPath ? h("span", { class: "chip ok", title: "已保存为风格 skill" }, "skill") : null,
+          a.videoPath ? h("span", { class: "chip ok", title: "分析时已下载原视频" }, "原视频" + (a.videoBytes ? " " + fmtSize(a.videoBytes) : "")) : null,
           Array.isArray(a.shots) ? h("span", { class: "chip" }, speech ? "有口播" : "无口播") : null),
         h("div", { class: "lib-card-title two-line", title }, title),
         h("div", { class: "lib-card-meta" }, [a.author || "未知作者", a.musicName ? "♪ " + a.musicName.slice(0, 30) : "", fmtWhen(a.createdAt)].filter(Boolean).join(" · ")),
@@ -236,7 +237,9 @@
             if (!/^https?:\/\//i.test(a.sourceUrl)) { window.Shell.toast("原地址无效", "error"); return; }
             window.Shell.navigate("douyin");
             api.video.embed.nav("douyin", "newTab", a.sourceUrl).catch((err) => window.Shell.toast("打开失败：" + err.message, "error"));
-          } }, "原视频") : null,
+          } }, a.videoPath ? "原网页" : "原视频") : null,
+          a.videoPath ? h("button", { class: "btn small", title: "播放下载的原视频", onclick: (e) => { e.stopPropagation(); call(api.video.analyses.openVideo(a.id)); } }, "播放") : null,
+          a.videoPath ? h("button", { class: "btn small ghost", title: "在文件夹里显示", onclick: (e) => { e.stopPropagation(); call(api.video.analyses.openVideo(a.id, true)); } }, "文件夹") : null,
           h("button", { class: "btn small danger-ghost", onclick: async (e) => {
             e.stopPropagation();
             if (!await window.Shell.confirm(`确定删除这条分析“${title}”吗？`)) return;
