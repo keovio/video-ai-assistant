@@ -859,15 +859,46 @@ async function fetchEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}) {
     return { src: c[0] || "", blob: /^blob:/i.test(v.currentSrc || v.src || ""), page: location.href, title: document.title };
   })()`), 3000, "读取视频地址");
   if (!info) throw new Error("页面上没找到视频");
-  const headers = { Referer: info.page, "User-Agent": wc.getUserAgent() };
-  const fetchAll = async (url, label) => {
-    const res = await withTimeout(wc.session.fetch(url, { headers }), 30000, "连接" + label);
+  // 0.6.35：在页面里下载（和油猴脚本一样：带页面自己的 Referer/Cookie，播放器本来就跨域拉这些地址），
+  // 分块取回主进程；页面里失败再用主进程直连（不带自定义请求头，带了会被 Chromium 拦成 ERR_BLOCKED_BY_CLIENT）。
+  const fetchInPage = async (url, label) => {
+    const r = await withTimeout(wc.executeJavaScript(`(async () => {
+      try {
+        let res;
+        try { res = await fetch(${JSON.stringify(url)}, { credentials: "include" }); }
+        catch (e) { res = await fetch(${JSON.stringify(url)}, { credentials: "omit" }); }
+        if (!res.ok) return { error: "HTTP " + res.status };
+        const len = Number(res.headers.get("content-length")) || 0;
+        if (len > ${maxBytes}) return { error: "视频太大（" + Math.round(len / 1048576) + " MB）" };
+        const buf = new Uint8Array(await res.arrayBuffer());
+        let s = ""; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode.apply(null, buf.subarray(i, i + 32768));
+        window.__harkDl = btoa(s);
+        return { n: window.__harkDl.length, mime: (res.headers.get("content-type") || "").split(";")[0] };
+      } catch (e) { return { error: e.message || String(e) }; }
+    })()`), 240000, "页面里下载" + label);
+    if (!r || r.error) throw new Error((r && r.error) || "页面里下载失败");
+    const parts = [];
+    for (let i = 0; i < r.n; i += 4 * 1024 * 1024) parts.push(await wc.executeJavaScript(`window.__harkDl.slice(${i}, ${i + 4 * 1024 * 1024})`));
+    await wc.executeJavaScript("window.__harkDl = null").catch(() => {});
+    const buf = Buffer.from(parts.join(""), "base64");
+    if (buf.length < 10240) throw new Error(`下载到的${label}不完整`);
+    return { buf, mime: r.mime };
+  };
+  const fetchDirect = async (url, label) => {
+    const res = await withTimeout(wc.session.fetch(url), 30000, "连接" + label);
     if (!res.ok) throw new Error(`${label}下载失败 HTTP ${res.status}`);
     const len = Number(res.headers.get("content-length")) || 0;
     if (len > maxBytes) throw new Error(`视频太大（${(len / 1048576).toFixed(0)} MB）`);
     const buf = Buffer.from(await withTimeout(res.arrayBuffer(), 180000, "下载" + label));
     if (buf.length < 10240) throw new Error(`下载到的${label}不完整`);
     return { buf, mime: String(res.headers.get("content-type") || "").split(";")[0] };
+  };
+  const fetchAll = async (url, label) => {
+    try { return await fetchInPage(url, label); }
+    catch (err) {
+      log.warn(`页面里下载${label}失败（${(err && err.message) || err}），改用直连`);
+      return fetchDirect(url, label);
+    }
   };
   // 0.6.34：先用页面接口数据里的原视频地址（预加载脚本记下的，和油猴脚本同样的来源）
   let videoPart = null, audioPart = null;
@@ -889,7 +920,7 @@ async function fetchEmbeddedVideo(kind, { maxBytes = 300 * 1024 * 1024 } = {}) {
     } catch (e) { return { id: "", urls: [], known: 0, error: e.message }; }
   })()`).catch(() => null);
   if (fromApi && fromApi.urls.length) {
-    for (const u of fromApi.urls.slice(0, 6)) {
+    for (const u of fromApi.urls.slice(0, 3)) {
       try { videoPart = await fetchAll(u, "视频"); break; } catch (err) { log.warn(`接口地址下载失败：${(err && err.message) || err}`); }
     }
   } else if (fromApi) {
