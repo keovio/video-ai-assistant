@@ -87,7 +87,7 @@ test("分析结果校验：规范化、秒数兜底、skill 名清洗、缺字�
   const v = validateAnalysis(JSON.parse(JSON.stringify(VALID_RAW)));
   assert.equal(v.skill.name, "melancholic-cinematic");
   assert.equal(v.script.shots[0].seconds, 3);
-  assert.equal(v.script.shots[1].imagePrompt, "空无一人的路灯下"); // imagePrompt 缺省时用 visual
+  assert.match(v.script.shots[1].imagePrompt, /^空无一人的路灯下\n风格：/); // imagePrompt 缺省时用 visual，0.6.28 末尾补整体风格
   assert.ok(v.script.shots[1].seconds > 0 && v.script.shots[1].seconds <= 30);
   assert.equal(v.style.visual, "电影感");
 
@@ -281,5 +281,5 @@ test("0.6.17：截图差异提示一镜到底，prompt 不把简介当口播", a
   assert.match(user, /不是口播/);
   assert.match(user, /没有读到字幕原文/);
   assert.match(user, /截图时间点：1 秒、9 秒/);
-  assert.match(user, /很可能是一镜到底/);
+  assert.match(user, /是一镜到底/);
 });

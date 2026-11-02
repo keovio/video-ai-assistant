@@ -373,6 +373,8 @@
         const saved = await saveDraft(root, d, { silent: true });
         const r = await api.video.analyses.import(saved.id);
         if (!r.ok) { window.Shell.toast(r.error || "导入失败", "error"); return; }
+        // 0.6.28：导入的项目默认用这条分析的风格，合成页“复制画面”自动带上
+        if (window.StyleSkill) window.StyleSkill.set(r.project.id, saved.id);
         window.VideoApp.openProject(r.project.id);
         window.Shell.navigate("editor");
         window.Shell.toast("已按分镜新建项目，去分镜编辑里确认", "success");

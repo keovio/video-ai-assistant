@@ -185,13 +185,14 @@
     // 画面提示词：生视频提示词，没有就用画面描述（复制去可灵/海螺/Vidu 等网站用）
     const basePrompt = (s) => String(s.imagePrompt || s.visual || "").trim();
     // 0.6.23：选了风格 skill 时，复制的提示词后面接上风格要点
-    const skillList = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath);
+    const SS0 = window.StyleSkill;
+    const skillList = ((await api.video.analyses.list().catch(() => ({ analyses: [] }))).analyses || []).filter((a) => a.skillPath || a.id === (SS0 && SS0.get(currentId)));
     const SS = window.StyleSkill;
     let skillId = SS ? SS.get(currentId) : "";
     if (skillId && !skillList.some((a) => a.id === skillId)) { skillId = ""; SS.set(currentId, ""); }
     const curSkill = () => skillList.find((a) => a.id === skillId) || null;
     const styleText = () => (SS && curSkill() ? SS.suffix(curSkill()) : "");
-    const promptOf = (s) => { const p = basePrompt(s); const st = styleText(); return p && st ? `${p}\n风格：${st}` : p; };
+    const promptOf = (s) => { const p = basePrompt(s); const st = styleText(); return p && st && !/风格[:：]/.test(p) ? `${p}\n风格：${st}` : p; };
     const copyText = async (text, okMsg) => {
       if (!text) { window.Shell.toast("没有可复制的画面提示词，先去分镜编辑里写画面描述", "error"); return; }
       try { await navigator.clipboard.writeText(text); window.Shell.toast(okMsg, "success"); }

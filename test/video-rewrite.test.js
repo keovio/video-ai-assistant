@@ -23,3 +23,13 @@ test("TikTok 链接识别与解析", () => {
   assert.strictEqual(info.site, "tiktok");
   assert.strictEqual(info.videoId, "7400000000000000001");
 });
+
+test("0.6.28：截图没有明显切换时多镜合并成 1 镜", () => {
+  const { enforceShotCount } = require("../lib/video/ai");
+  const r = { script: { shots: [{ narration: "你", visual: "a", imagePrompt: "p1", seconds: 5 }, { narration: "好", visual: "b", imagePrompt: "p2", seconds: 10 }] } };
+  const m = enforceShotCount(r, { frameDiffs: [0.05, 0.12, 0.2] });
+  assert.strictEqual(m.script.shots.length, 1);
+  assert.strictEqual(m.script.shots[0].seconds, 15);
+  assert.strictEqual(m.script.shots[0].narration, "你好");
+  assert.strictEqual(enforceShotCount(r, { frameDiffs: [0.05, 0.5] }).script.shots.length, 2);
+});
