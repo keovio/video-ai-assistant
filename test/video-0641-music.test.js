@@ -31,3 +31,11 @@ test("音乐：卡点统计和描述进提示词", () => {
   assert.match(text, /3 处换镜中有 3 处落在节拍上/);
   assert.match(buildAnalysisPrompt({ musicNotes: text }), /测试曲/);
 });
+
+test("0.6.43：skill 带通用风格提示词并写进 SKILL.md", () => {
+  const { validateAnalysis, buildSkillText } = require("../lib/video/ai");
+  const a = validateAnalysis({ style: { visual: "v" }, skill: { name: "a", description: "d", prompt: "手持环绕推镜，暖光", body: "b" },
+    script: { title: "t", hasSpeech: false, shots: [{ visual: "x", imagePrompt: "y", seconds: 3 }] } });
+  assert.strictEqual(a.skill.prompt, "手持环绕推镜，暖光");
+  assert.match(buildSkillText(a), /风格提示词[\s\S]*手持环绕推镜/);
+});

@@ -34,6 +34,8 @@
     suffix(a) {
       if (!a) return "";
       const st = a.style || {}; const sk = a.skill || {};
+      // 0.6.43：新分析有通用风格提示词（不含具体人物和动作），优先用它
+      if (sk.prompt) return String(sk.prompt).replace(/\s+/g, " ").trim().slice(0, 600);
       const parts = [sk.description, st.visual && "画面：" + st.visual, st.camera && "镜头：" + st.camera, st.colorLight && "色彩光线：" + st.colorLight, st.mood && "氛围：" + st.mood]
         .map((x) => String(x || "").replace(/\s+/g, " ").trim()).filter(Boolean);
       const text = parts.join("；");
