@@ -6,7 +6,27 @@
   const api = window.app;
   const C = () => api.video.chars;
   const JIMENG = "https://jimeng.jianying.com";
-  const KIND = { sheet: "三视图", face: "面部特写", frame: "镜头首帧", other: "参考图" };
+  const KIND = { sheet: "三视图", face: "面部特写", frame: "镜头首帧", other: "参考图", wide: "场景全景", angle: "场景多角度" };
+  // 0.6.56：角色和场景共用这一套（同一个库，type 区分）
+  const TYPES = {
+    character: { word: "角色", ph: "👤", namePh: "角色名，如 小鹿", descPh: "一句话描述，如：20岁女生，粉色双丸子头，古风cos服",
+      aLabel: "外貌锚点（每次生图都会带上，保证是同一个人）", aPh: "外貌锚点：性别年龄感、脸型、眉眼、鼻唇、肤色、发型发色、身材、标志特征（不写服装）", aName: "外貌锚点",
+      oLabel: "服装", oPh: "服装：款式、颜色、材质、配饰、头饰", oName: "服装",
+      empty: "还没有角色。新建一个，写下外貌、生成三视图，之后每镜首帧图都会是同一个人。",
+      refineCtx: "AI 生图用的固定角色设定（外貌锚点只写不随镜头变的特征）", refinePh: "告诉 AI 怎么改，如：改成短发、年龄小一点、换成白衬衫（外貌和服装会一起对上）",
+      editPh: "要怎么改，如：头发改成齐肩短发；衣服换成白色衬衫；表情更开心", syncLabel: "同时更新外貌锚点/服装（长期特征改了就勾上，后面生图都会跟着变）",
+      gens: [["sheet", "三视图"], ["face", "面部特写"]], kinds: ["sheet", "face", "frame", "other"], main: "sheet", genTitle: "生成形象图",
+      genHint: "网页生成：会复制提示词和参考图并打开即梦，生成后下载，再用“导入图片”放回来（选对类型）。三视图 + 面部特写都有时，首帧图最稳。" },
+    scene: { word: "场景", ph: "🏞", namePh: "场景名，如 雨夜街角", descPh: "一句话描述，如：深夜下雨的老街便利店门口，霓虹灯",
+      aLabel: "场景描述（每次生图都会带上，保证是同一个地方）", aPh: "地点、空间布局、主要陈设和位置、墙地材质颜色、标志性物件、远景（不写人物）", aName: "场景描述",
+      oLabel: "光线与氛围", oPh: "时间、主光方向和色温、天气、整体色调", oName: "光线与氛围",
+      empty: "还没有场景。新建一个，写下地点和陈设、生成场景全景，之后每镜首帧图的背景都会是同一个地方。",
+      refineCtx: "AI 生图用的固定场景设定（不写人物）", refinePh: "告诉 AI 怎么改，如：改成白天、加一排书架、换成暖色调（描述和氛围会一起对上）",
+      editPh: "要怎么改，如：改成黄昏；墙换成红砖；去掉桌上的杂物", syncLabel: "同时更新场景描述/光线氛围（长期特征改了就勾上，后面生图都会跟着变）",
+      gens: [["wide", "场景全景"], ["angle", "多角度"]], kinds: ["wide", "angle", "frame", "other"], main: "wide", genTitle: "生成场景图",
+      genHint: "场景图里不会出现人物。有了场景全景，首帧图选上这个场景，背景就能保持一致。" },
+  };
+  const kindOpts = (t) => TYPES[t].kinds.map((v) => h("option", { value: v }, KIND[v]));
   const toast = (m, t) => window.Shell.toast(m, t);
   const call = async (p, okMsg) => {
     const r = await p.catch((e) => ({ ok: false, error: e.message }));
@@ -21,10 +41,10 @@
     get: (pid) => (pid ? localStorage.getItem("render.char." + pid) || "" : ""),
     set: (pid, id) => { if (!pid) return; if (id) localStorage.setItem("render.char." + pid, id); else localStorage.removeItem("render.char." + pid); },
   };
-  let cache = null;
-  async function list(fresh) {
-    if (!cache || fresh) { const r = await C().list().catch(() => null); cache = (r && r.ok && r.characters) || []; }
-    return cache;
+  const cache = {};
+  async function list(fresh, type = "character") {
+    if (!cache[type] || fresh) { const r = await C().list(type).catch(() => null); cache[type] = (r && r.ok && r.characters) || []; }
+    return cache[type];
   }
   function modal(title, ...children) {
     const close = () => overlay.remove();
@@ -48,25 +68,26 @@
   }
 
   // ---------- 角色卡片区（作品库） ----------
-  function section(onChange) {
+  function section(onChange, type = "character") {
+    const T = TYPES[type];
     const grid = h("div", { class: "lib-grid lib-grid-chars" });
     const box = h("section", { class: "lib-section" },
-      h("div", { class: "lib-section-head" }, h("h2", {}, "角色"),
-        h("button", { class: "btn small primary", onclick: () => openEditor(null, refresh) }, "＋ 新建角色")),
+      h("div", { class: "lib-section-head" }, h("h2", {}, T.word),
+        h("button", { class: "btn small primary", onclick: () => openEditor(null, refresh, type) }, "＋ 新建" + T.word)),
       grid);
     async function refresh() {
-      const all = await list(true);
+      const all = await list(true, type);
       grid.textContent = "";
-      if (!all.length) grid.append(h("p", { class: "muted small-text" }, "还没有角色。新建一个，写下外貌、生成三视图，之后每镜首帧图都会是同一个人。"));
+      if (!all.length) grid.append(h("p", { class: "muted small-text" }, T.empty));
       for (const c of all) {
-        grid.append(h("div", { class: "lib-card lib-char", onclick: () => openEditor(c.id, refresh) },
-          h("div", { class: "lib-thumb" }, c.coverUrl ? h("img", { src: c.coverUrl, alt: "" }) : h("span", { class: "lib-thumb-ph" }, "👤")),
+        grid.append(h("div", { class: "lib-card lib-char", onclick: () => openEditor(c.id, refresh, type) },
+          h("div", { class: "lib-thumb" }, c.coverUrl ? h("img", { src: c.coverUrl, alt: "" }) : h("span", { class: "lib-thumb-ph" }, T.ph)),
           h("div", { class: "lib-card-body" },
             h("div", { class: "lib-card-title" }, c.name),
             h("div", { class: "lib-card-meta" },
               h("span", { class: "chip" }, `${c.images.length} 张图`),
-              c.images.some((x) => x.kind === "sheet") ? h("span", { class: "chip ok" }, "有三视图") : h("span", { class: "chip warn" }, "缺三视图")),
-            h("div", { class: "muted small-text two-line", title: c.anchor }, c.anchor || "还没写外貌"))));
+              c.images.some((x) => x.kind === T.main) ? h("span", { class: "chip ok" }, "有" + KIND[T.main]) : h("span", { class: "chip warn" }, "缺" + KIND[T.main])),
+            h("div", { class: "muted small-text two-line", title: c.anchor }, c.anchor || "还没写" + T.aName))));
       }
       if (onChange) onChange(all.length);
     }
@@ -75,50 +96,51 @@
   }
 
   // ---------- 角色编辑弹窗 ----------
-  async function openEditor(id, onDone) {
+  async function openEditor(id, onDone, type = "character") {
     let cur = id ? ((await C().get(id).catch(() => null)) || {}).character || null : null;
-    const name = h("input", { class: "input", placeholder: "角色名，如 小鹿", value: cur ? cur.name : "" });
-    const anchor = h("textarea", { class: "input", rows: 4, placeholder: "外貌锚点：性别年龄感、脸型、眉眼、鼻唇、肤色、发型发色、身材、标志特征（不写服装）" }, cur ? cur.anchor : "");
-    const outfit = h("textarea", { class: "input", rows: 2, placeholder: "服装：款式、颜色、材质、配饰、头饰" }, cur ? cur.outfit : "");
+    if (cur && cur.type) type = cur.type;
+    const T = TYPES[type] || TYPES.character;
+    const name = h("input", { class: "input", placeholder: T.namePh, value: cur ? cur.name : "" });
+    const anchor = h("textarea", { class: "input", rows: 4, placeholder: T.aPh }, cur ? cur.anchor : "");
+    const outfit = h("textarea", { class: "input", rows: 2, placeholder: T.oPh }, cur ? cur.outfit : "");
     // AI 帮写
-    const desc = h("input", { class: "input grow", placeholder: "一句话描述，如：20岁女生，粉色双丸子头，古风cos服" });
+    const desc = h("input", { class: "input grow", placeholder: T.descPh });
     const photo = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true });
     let photoUrl = "";
     const photoBtn = h("button", { class: "btn small", onclick: () => photo.click() }, "选照片");
     photo.onchange = async () => { const f = photo.files && photo.files[0]; if (!f) return; photoUrl = await readFile(f); photoBtn.textContent = "已选照片 ✓"; };
     const aiBtn = h("button", { class: "btn small", onclick: async () => {
       aiBtn.disabled = true; aiBtn.textContent = "AI 写中…";
-      const r = await call(C().describe({ text: desc.value.trim(), image: photoUrl }));
+      const r = await call(C().describe({ text: desc.value.trim(), image: photoUrl, type }));
       aiBtn.disabled = false; aiBtn.textContent = "AI 帮我写";
       if (!r) return;
       if (r.name && !name.value.trim()) name.value = r.name;
       anchor.value = r.anchor || anchor.value; outfit.value = r.outfit || outfit.value;
-      toast("已填好外貌和服装，检查后点保存", "success");
+      toast(`已填好${T.aName}和${T.oName}，检查后点保存`, "success");
     } }, "AI 帮我写");
     const saveBtn = h("button", { class: "btn primary", onclick: async () => {
-      if (!anchor.value.trim()) return toast("先写外貌锚点（可以点“AI 帮我写”）", "error");
-      const r = await call(C().save({ id: cur && cur.id, name: name.value.trim(), anchor: anchor.value.trim(), outfit: outfit.value.trim() }), "已保存");
+      if (!anchor.value.trim()) return toast(`先写${T.aName}（可以点“AI 帮我写”）`, "error");
+      const r = await call(C().save({ id: cur && cur.id, type, name: name.value.trim(), anchor: anchor.value.trim(), outfit: outfit.value.trim() }), "已保存");
       if (!r) return;
       const firstSave = !cur;
       cur = r.character;
-      if (firstSave && photoUrl) await C().addImage(cur.id, { dataUrl: photoUrl }, "face", "原始照片").catch(() => {});
+      if (firstSave && photoUrl) await C().addImage(cur.id, { dataUrl: photoUrl }, type === "scene" ? "wide" : "face", "原始照片").catch(() => {});
       await drawImages(); if (onDone) onDone();
     } }, "保存");
     const imgs = h("div", { class: "char-images" });
     const genBox = h("div", { class: "char-gen" });
     const delBtn = h("button", { class: "btn ghost danger", onclick: async () => {
-      if (!cur || !await window.Shell.confirm(`删除角色“${cur.name}”和它的所有图片吗？`)) return;
+      if (!cur || !await window.Shell.confirm(`删除${T.word}“${cur.name}”和它的所有图片吗？`)) return;
       if (await call(C().remove(cur.id), "已删除")) { m.close(); if (onDone) onDone(); }
-    } }, "删除角色");
-    const m = modal(cur ? `角色：${cur.name}` : "新建角色",
+    } }, "删除" + T.word);
+    const m = modal(cur ? `${T.word}：${cur.name}` : "新建" + T.word,
       h("div", { class: "char-form" },
         h("label", {}, h("span", { class: "small-text" }, "名字"), name),
         h("div", { class: "row" }, desc, photoBtn, aiBtn, photo),
-        h("label", {}, h("span", { class: "small-text" }, "外貌锚点（每次生图都会带上，保证是同一个人）"), anchor),
-        h("label", {}, h("span", { class: "small-text" }, "服装"), outfit),
-        window.AiRefine.box({ stackKey: cur || anchor, context: "AI 生图用的固定角色设定（外貌锚点只写不随镜头变的特征）",
-          placeholder: "告诉 AI 怎么改，如：改成短发、年龄小一点、换成白衬衫（外貌和服装会一起对上）",
-          fields: () => [window.AiRefine.field("anchor", "外貌锚点", anchor), window.AiRefine.field("outfit", "服装", outfit)],
+        h("label", {}, h("span", { class: "small-text" }, T.aLabel), anchor),
+        h("label", {}, h("span", { class: "small-text" }, T.oLabel), outfit),
+        window.AiRefine.box({ stackKey: cur || anchor, context: T.refineCtx, placeholder: T.refinePh,
+          fields: () => [window.AiRefine.field("anchor", T.aName, anchor), window.AiRefine.field("outfit", T.oName, outfit)],
           flash: (k) => ({ anchor, outfit })[k] }),
         ),
       genBox, imgs);
@@ -130,7 +152,7 @@
     async function editImage(im) {
       const picker = await modelPicker();
       const hasKey = picker.any();
-      const ins = h("textarea", { class: "input", rows: 3, placeholder: "要怎么改，如：头发改成齐肩短发；衣服换成白色衬衫；表情更开心" });
+      const ins = h("textarea", { class: "input", rows: 3, placeholder: T.editPh });
       const sync = h("input", { type: "checkbox", checked: true });
       const status = h("p", { class: "muted small-text" });
       const goBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "" : "设置 → 人物生图 里保存 API Key 后可用" }, "改图");
@@ -138,13 +160,13 @@
       const imgBtn = h("button", { class: "btn", title: "复制这张图，去即梦当参考图粘贴", onclick: () => call(C().copyImage(cur.id, im.file), "这张图已复制") }, "复制这张图");
       const syncText = async (instruction) => {
         if (!sync.checked) return true;
-        status.textContent = "同步外貌/服装描述…";
-        const r = await window.app.video.ai.refine({ instruction: "角色形象修改：" + instruction, context: "AI 生图用的固定角色设定（只改和这次修改有关的部分，表情动作这类临时变化不写进外貌锚点）",
-          fields: [{ key: "anchor", label: "外貌锚点", text: anchor.value }, { key: "outfit", label: "服装", text: outfit.value }] }).catch((e) => ({ ok: false, error: e.message }));
+        status.textContent = `同步${T.aName}/${T.oName}…`;
+        const r = await window.app.video.ai.refine({ instruction: `${T.word}修改：` + instruction, context: T.refineCtx + "（只改和这次修改有关的部分，临时变化不写进去）",
+          fields: [{ key: "anchor", label: T.aName, text: anchor.value }, { key: "outfit", label: T.oName, text: outfit.value }] }).catch((e) => ({ ok: false, error: e.message }));
         if (!r || !r.ok) { status.textContent = "同步描述失败：" + ((r && r.error) || "未知错误"); return false; }
         if (r.changed.length) {
           anchor.value = r.fields.anchor; outfit.value = r.fields.outfit;
-          const s = await call(C().save({ id: cur.id, name: name.value.trim(), anchor: anchor.value.trim(), outfit: outfit.value.trim() }));
+          const s = await call(C().save({ id: cur.id, type, name: name.value.trim(), anchor: anchor.value.trim(), outfit: outfit.value.trim() }));
           if (!s) return false;
           cur = s.character;
         }
@@ -174,7 +196,7 @@
       const em = modal("改图",
         h("img", { class: "char-edit-preview", src: im.url || "", alt: "", title: "点击放大", onclick: () => window.ImageViewer.open([{ url: im.url, caption: KIND[im.kind] || "" }]) }),
         h("label", { class: "char-edit-field" }, h("span", { class: "small-text" }, "要怎么改"), ins),
-        h("label", { class: "row" }, sync, h("span", { class: "small-text" }, "同时更新外貌锚点/服装（长期特征改了就勾上，后面生图都会跟着变）")),
+        h("label", { class: "row" }, sync, h("span", { class: "small-text" }, T.syncLabel)),
         picker.el, status);
       const foot = em.overlay.querySelector(".modal > .actions.end");
       if (foot) foot.prepend(webBtn, imgBtn, h("span", { class: "spacer" }), goBtn);
@@ -183,7 +205,7 @@
     async function drawImages() {
       genBox.textContent = ""; imgs.textContent = "";
       delBtn.hidden = !cur;
-      if (!cur) { genBox.append(h("p", { class: "muted small-text" }, "保存后可以生成三视图、面部特写，或导入已有图片。")); return; }
+      if (!cur) { genBox.append(h("p", { class: "muted small-text" }, `保存后可以生成${T.gens.map((g) => g[1]).join("、")}，或导入已有图片。`)); return; }
       const fresh = ((await C().get(cur.id).catch(() => null)) || {}).character;
       if (fresh) cur = fresh;
       const picker = await modelPicker();
@@ -201,27 +223,27 @@
           btn);
       };
       const up = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: true, hidden: true });
-      const upKind = h("select", { class: "input small" }, ...Object.entries(KIND).map(([v, l]) => h("option", { value: v }, l)));
-      upKind.value = cur.images.some((x) => x.kind === "sheet") ? "other" : "sheet";
+      const upKind = h("select", { class: "input small" }, ...kindOpts(type));
+      upKind.value = cur.images.some((x) => x.kind === T.main) ? "other" : T.main;
       up.onchange = async () => {
         for (const f of [...(up.files || [])]) await call(C().addImage(cur.id, { dataUrl: await readFile(f) }, upKind.value));
         up.value = ""; await drawImages(); if (onDone) onDone();
       };
-      genBox.append(h("h3", {}, "生成形象图"), picker.el,
-        genRow("sheet", "三视图"), genRow("face", "面部特写"),
+      genBox.append(h("h3", {}, T.genTitle), picker.el,
+        ...T.gens.map(([k, l]) => genRow(k, l)),
         h("div", { class: "char-gen-row" }, h("b", {}, "导入图片"), upKind, h("button", { class: "btn small", onclick: () => up.click() }, "选择图片…"), up),
-        h("p", { class: "muted small-text" }, "网页生成：会复制提示词和参考图并打开即梦，生成后下载，再用“导入图片”放回来（选对类型）。三视图 + 面部特写都有时，首帧图最稳。"));
+        h("p", { class: "muted small-text" }, T.genHint));
       imgs.append(h("h3", {}, `图片 ${cur.images.length}`));
       const grid = h("div", { class: "char-img-grid" });
       for (const im of cur.images) {
         const kindSel = h("select", { class: "input small", onchange: async (e) => { await call(C().update(cur.id, { imageKind: { file: im.file, kind: e.target.value } })); } },
-          ...Object.entries(KIND).map(([v, l]) => h("option", { value: v }, l)));
+          ...kindOpts(type));
         kindSel.value = im.kind;
         grid.append(h("div", { class: "char-img" + (cur.cover === im.file ? " cover" : "") },
           h("img", { src: im.url || "", alt: "", title: (im.note ? im.note + " · " : "") + "点击放大", onclick: () => viewImages(cur, cur.images, cur.images.indexOf(im)) }),
           h("div", { class: "char-img-foot" }, kindSel,
             h("button", { class: "btn small ghost", title: "设为封面", onclick: async () => { if (await call(C().update(cur.id, { cover: im.file }))) { await drawImages(); if (onDone) onDone(); } } }, "★"),
-            h("button", { class: "btn small ghost", title: "改图：在这张图基础上修改，外貌/服装描述同步", onclick: () => editImage(im) }, "✎"),
+            h("button", { class: "btn small ghost", title: `改图：在这张图基础上修改，${T.aName}/${T.oName}同步`, onclick: () => editImage(im) }, "✎"),
             h("button", { class: "btn small ghost", title: "复制图片", onclick: () => call(C().copyImage(cur.id, im.file), "图片已复制") }, "⧉"),
             h("button", { class: "btn small ghost", title: "删除", onclick: async () => { if (await call(C().removeImage(cur.id, im.file))) { await drawImages(); if (onDone) onDone(); } } }, "✕")),
           im.note ? h("div", { class: "muted small-text one-line" }, im.note) : null));
@@ -295,22 +317,30 @@
     const sel = h("select", { class: "input" }, ...all.map((c) => h("option", { value: c.id }, c.name)));
     const bound = projectChar.get(opts.projectId);
     if (bound && all.some((c) => c.id === bound)) sel.value = bound;
+    // 0.6.56：可选场景，背景保持同一个地方
+    const scenes = await list(true, "scene");
+    const sceneSel = h("select", { class: "input" }, h("option", { value: "" }, scenes.length ? "不用场景" : "还没有场景（作品库 → 场景 新建）"), ...scenes.map((c) => h("option", { value: c.id }, c.name)));
+    const sceneKey = "render.scene." + (opts.projectId || "");
+    const boundScene = localStorage.getItem(sceneKey) || "";
+    if (boundScene && scenes.some((c) => c.id === boundScene)) sceneSel.value = boundScene;
     const ta = h("textarea", { class: "input", rows: 9 });
     const status = h("p", { class: "muted small-text" });
     const results = h("div", { class: "char-img-grid" });
     const fill = async () => {
       projectChar.set(opts.projectId, sel.value);
-      const r = await call(C().prompt(sel.value, { kind: "frame", shotPrompt: opts.shotPrompt, aspect: opts.aspect, style: opts.style }));
+      if (sceneSel.value) localStorage.setItem(sceneKey, sceneSel.value); else localStorage.removeItem(sceneKey);
+      const r = await call(C().prompt(sel.value, { kind: "frame", shotPrompt: opts.shotPrompt, aspect: opts.aspect, style: opts.style, sceneId: sceneSel.value }));
       if (r) {
-        ta.value = r.prompt; status.textContent = r.refs ? `会带这 ${r.refs} 张参考图（面部特写/三视图优先，点图放大）：` : "这个角色还没有参考图，只能靠文字，容易不像；建议先生成三视图";
+        ta.value = r.prompt; status.textContent = r.refs ? `会带这 ${r.refs} 张参考图（人物在前、场景在后，点图放大）：` : "这个角色还没有参考图，只能靠文字，容易不像；建议先生成三视图";
         // 0.6.52：把参考图本身列出来，点开能放大看
         const id = sel.value;
         const items = [];
-        for (const f of r.refFiles || []) { const im = await C().image(id, f).catch(() => null); if (im && im.ok) items.push({ url: im.url, caption: "参考图 · " + f }); }
+        for (const f of r.refFiles || []) { const im = await C().image(id, f).catch(() => null); if (im && im.ok) items.push({ url: im.url, caption: "人物参考图 · " + f }); }
+        for (const f of r.sceneRefFiles || []) { const im = await C().image(sceneSel.value, f).catch(() => null); if (im && im.ok) items.push({ url: im.url, caption: "场景参考图 · " + f }); }
         refStrip.replaceChildren(...items.map((it, k) => h("img", { src: it.url, alt: "", title: "点击放大", onclick: () => window.ImageViewer.open(items, k) })));
       }
     };
-    sel.onchange = fill;
+    sel.onchange = fill; sceneSel.onchange = fill;
     const picker = await modelPicker();
     const hasKey = picker.any();
     const refStrip = h("div", { class: "ref-strip" });
@@ -325,7 +355,7 @@
     };
     const genBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "用勾选的模型生成（勾几个就同时出几张对比）" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
       genBtn.disabled = true; genBtn.textContent = "生成中…（约 20–60 秒）";
-      const rs = await genMulti(sel.value, { kind: "frame", prompt: ta.value, aspect: opts.aspect, note: opts.label || "" }, picker);
+      const rs = await genMulti(sel.value, { kind: "frame", prompt: ta.value, aspect: opts.aspect, note: opts.label || "", sceneId: sceneSel.value }, picker);
       genBtn.disabled = false; genBtn.textContent = "API 生成";
       for (const r of rs) for (const f of r.files) await showFile(f);
     } }, "API 生成");
@@ -335,8 +365,8 @@
       up.value = ""; if (r) await showFile(r.file);
     } });
     modal(`${opts.label || "镜头"} · 首帧图`,
-      h("label", {}, h("span", { class: "small-text" }, "角色"), sel),
-      h("label", {}, h("span", { class: "small-text" }, "提示词（可改）"), ta), status, refStrip, picker.el,
+      h("div", { class: "frame-pick-row" }, h("label", { class: "char-edit-field" }, h("span", { class: "small-text" }, "角色"), sel), h("label", { class: "char-edit-field" }, h("span", { class: "small-text" }, "场景"), sceneSel)),
+      h("label", { class: "char-edit-field" }, h("span", { class: "small-text" }, "提示词（可改）"), ta), status, refStrip, picker.el,
       window.AiRefine.box({ stackKey: ta, context: "镜头首帧图的生图提示词（人物外貌要和角色设定一致）",
         fields: () => [window.AiRefine.field("prompt", "首帧图提示词", ta)], flash: () => ta }),
       h("div", { class: "actions" },
@@ -349,5 +379,5 @@
     await fill();
   }
 
-  window.Characters = { section, openEditor, openFrame, projectChar, list, whoText };
+  window.Characters = { section, openEditor, openFrame, projectChar, list, whoText, sceneSection: (onChange) => section(onChange, "scene") };
 })();

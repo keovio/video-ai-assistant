@@ -825,3 +825,4 @@ kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border: 1px solid
 .chip-x:hover { opacity: 1; color: var(--danger, #dc2626); }
 .image-provider-card > .row { display: flex; align-items: center; gap: 8px; }
 .image-provider-card .grow { flex: 1; }
+.frame-pick-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } .char-edit-field select { width: 100%; }

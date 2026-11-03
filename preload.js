@@ -143,7 +143,7 @@ contextBridge.exposeInMainWorld("app", {
     },
     // 0.6.44 角色库（固定人物形象）+ 生图
     chars: {
-      list: () => ipcRenderer.invoke("video:chars.list"),
+      list: (type) => ipcRenderer.invoke("video:chars.list", type || "character"),
       get: (id) => ipcRenderer.invoke("video:chars.get", id),
       save: (c) => ipcRenderer.invoke("video:chars.save", c),
       remove: (id) => ipcRenderer.invoke("video:chars.remove", id),

@@ -113,7 +113,7 @@
         h("button", { class: "btn", onclick: () => load(root) }, "刷新")),
       h("div", { class: "lib-toolbar" },
         h("div", { class: "segmented" },
-          tabBtn("all", "全部"), tabBtn("renders", "成片", state.renders.length), tabBtn("analyses", "分析", state.analyses.length), tabBtn("skills", "风格 skill", state.analyses.filter((a) => a.skillPath).length), tabBtn("sources", "原视频", state.sources.length), tabBtn("chars", "角色")),
+          tabBtn("all", "全部"), tabBtn("renders", "成片", state.renders.length), tabBtn("analyses", "分析", state.analyses.length), tabBtn("skills", "风格 skill", state.analyses.filter((a) => a.skillPath).length), tabBtn("sources", "原视频", state.sources.length), tabBtn("chars", "角色"), tabBtn("scenes", "场景")),
         search,
         h("select", { class: "input lib-select", title: "时间范围", value: state.range, onchange: (e) => { state.range = e.target.value; localStorage.setItem("library.range", state.range); drawResults(root); } },
           ...RANGES.map(([v, l]) => h("option", { value: v }, l))),
@@ -147,6 +147,7 @@
       state.sources.length ? "没有匹配的原视频。" : "还没有原视频。分析视频时会自动下载原视频，存到这里。"));
     // 0.6.44 角色库
     if (show("chars") && window.Characters) body.append(window.Characters.section());
+    if (show("scenes") && window.Characters) body.append(window.Characters.sceneSection());
   }
 
   function section(root, kind, title, items, cardFn, emptyText) {
