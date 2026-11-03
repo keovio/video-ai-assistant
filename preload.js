@@ -159,6 +159,7 @@ contextBridge.exposeInMainWorld("app", {
       keyStatus: (provider) => ipcRenderer.invoke("video:chars.keyStatus", provider),
       setKey: (v, provider) => ipcRenderer.invoke("video:chars.setKey", v, provider),
       providers: () => ipcRenderer.invoke("video:chars.providers"),
+      listModels: (provider) => ipcRenderer.invoke("video:chars.listModels", provider),
     },
     library: {
       renders: () => ipcRenderer.invoke("video:library.renders"),

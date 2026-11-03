@@ -76,6 +76,8 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   imageProvider: { type: "enum", values: ["ark", "zhipu", "openai", "custom"], default: "ark" }, // 0.6.47：人物生图服务商
   imageBaseUrl: { type: "string", maxLength: 500, default: "" }, // 留空用服务商默认地址
   imageModel: { type: "string", maxLength: 128, default: "" }, // 留空用服务商默认模型
+  // 0.6.54：每家服务商启用哪些模型、各自的接口地址，JSON：{ ark: { models: [...], baseUrl: "" }, ... }
+  imageProviders: { type: "string", maxLength: 8000, default: "" },
 } });
 const logger = createLogger({ dir: path.join(DATA_DIR, "logs"), level: settings.get("logLevel"), echo: !app.isPackaged || SMOKE });
 const tasks = createTaskManager({ concurrency: 2, logger });
@@ -1044,7 +1046,7 @@ setupVideoIpc({
   tasks,
   logger,
   secrets: ttsSecrets,
-  getImageSettings: () => ({ imageProvider: settings.get("imageProvider"), imageBaseUrl: settings.get("imageBaseUrl"), imageModel: settings.get("imageModel") }),
+  getImageSettings: () => ({ imageProvider: settings.get("imageProvider"), imageBaseUrl: settings.get("imageBaseUrl"), imageModel: settings.get("imageModel"), imageProviders: settings.get("imageProviders") }),
   // 智谱/OpenAI 没单独填生图 Key 时，若 AI 分析用的是同一家，就借用 AI 分析的 Key
   getImageKey: (p = "ark") => ttsSecrets.get("imageApiKey." + p) || (p === "ark" ? ttsSecrets.get("imageApiKey") : "")
     || ((p === "zhipu" && /bigmodel\.cn/i.test(settings.get("aiBaseUrl") || "")) || (p === "openai" && /api\.openai\.com/i.test(settings.get("aiBaseUrl") || "https://api.openai.com")) ? ttsSecrets.get("aiApiKey") : ""),

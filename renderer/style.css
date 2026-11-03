@@ -820,3 +820,4 @@ kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border: 1px solid
 /* 0.6.53 点弹窗外面：不关闭，轻轻抖一下 */
 @keyframes modalNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 .modal-nudge { animation: modalNudge .25s ease-in-out 2; }
+.image-provider-card { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }

@@ -163,38 +163,61 @@
       render(box) {
         box.append(
           h("p", { class: "muted small-text" }, "作品库 → 角色 里生成三视图和镜头首帧图用。不填也能用：复制提示词和参考图，到即梦网页里自己生成，再导入。"));
-        // 0.6.47：服务商 + 模型可选；换服务商时清空模型和地址，用该家的默认值
+        // 0.6.54：每家服务商各存一个 Key、各自勾选要用的模型；生图时从这里勾过的模型里选（可同时用几个）
         const dyn = h("div", {});
         box.append(dyn);
-        let info = null;
+        const getConf = () => { try { return JSON.parse(window.Shell.getSettings().imageProviders || "{}") || {}; } catch { return {}; } };
+        const saveConf = (conf) => window.Shell.saveSettings({ imageProviders: JSON.stringify(conf) });
+        const fetched = {}; // 本次打开从服务商拉到的模型
         const draw = async () => {
-          if (!info) { const r = await api.video.chars.providers().catch(() => null); info = (r && r.ok && r.providers) || []; }
-          const st = window.Shell.getSettings();
-          const pid = info.some((x) => x.id === st.imageProvider) ? st.imageProvider : "ark";
-          const P = info.find((x) => x.id === pid) || { models: [], base: "", label: pid, keyHint: "" };
-          const provSel = h("select", { class: "input", onchange: async () => {
-            await window.Shell.saveSettings({ imageProvider: provSel.value, imageModel: "", imageBaseUrl: "" });
-            draw();
-          } }, ...info.map((x) => h("option", { value: x.id }, x.label)));
-          provSel.value = pid;
-          const curModel = st.imageModel || (P.models[0] ? P.models[0][0] : "");
-          const isPreset = P.models.some(([m]) => m === curModel);
-          const modelInput = h("input", { class: "input", placeholder: "模型名，如 gpt-image-1", value: curModel,
-            oninput: debounce(() => window.Shell.saveSettings({ imageModel: modelInput.value.trim() }), 300) });
-          modelInput.hidden = P.models.length > 0 && isPreset;
-          const modelSel = h("select", { class: "input", onchange: () => {
-            if (modelSel.value === "__custom") { modelInput.hidden = false; modelInput.value = ""; modelInput.focus(); return; }
-            modelInput.hidden = true; modelInput.value = modelSel.value;
-            window.Shell.saveSettings({ imageModel: modelSel.value }).then(draw);
-          } }, ...P.models.map(([m, l]) => h("option", { value: m }, l)), h("option", { value: "__custom" }, "自定义模型名…"));
-          modelSel.value = isPreset ? curModel : "__custom";
-          modelSel.hidden = !P.models.length;
-          const refsOk = pid === "custom" || (pid === "ark" && !/t2i|seedream-3/i.test(curModel)) || (pid === "openai" && /^gpt-image/i.test(curModel));
+          const r = await api.video.chars.providers().catch(() => null);
+          const info = (r && r.ok && r.providers) || [];
+          const conf = getConf();
+          // 第一次保存时，把现在生效的（含旧设置迁移来的）启用模型写进去
+          for (const P of info) if (!conf[P.id]) conf[P.id] = { models: P.enabled || [], baseUrl: P.baseUrl || "" };
+          const enabledAll = info.flatMap((P) => (P.hasKey ? P.modelInfo.map((m) => ({ p: P, m })) : []));
+          const defSel = h("select", { class: "input", onchange: () => { const [pid, mid] = defSel.value.split("|"); window.Shell.saveSettings({ imageProvider: pid, imageModel: mid }); } },
+            ...(enabledAll.length ? enabledAll.map(({ p: P, m }) => h("option", { value: P.id + "|" + m.id }, `${P.label.replace(/（.*?）/g, "")} · ${m.label}`)) : [h("option", { value: "" }, "先在下面存 Key、勾模型")]));
+          if (r && r.ok) defSel.value = r.current + "|" + r.model;
+          if (!defSel.value && enabledAll[0]) defSel.selectedIndex = 0;
+          const cards = info.map((P) => {
+            const c = conf[P.id];
+            const preset = (P.models || []).map(([id]) => id);
+            const list = [...new Set([...preset, ...(fetched[P.id] || []), ...c.models])];
+            const label = (id) => { const hit = (P.models || []).find(([m]) => m === id); return hit ? hit[1] : id; };
+            const chips = h("div", { class: "model-pick" }, ...list.map((id) => {
+              const cb = h("input", { type: "checkbox", checked: c.models.includes(id), onchange: async () => {
+                c.models = cb.checked ? [...new Set([...c.models, id])] : c.models.filter((x) => x !== id);
+                conf[P.id] = c; await saveConf(conf); draw();
+              } });
+              return h("label", { class: "model-chip", title: id }, cb, label(id));
+            }), list.length ? null : h("span", { class: "muted small-text" }, "点“获取可用模型”或手动添加"));
+            const addInput = h("input", { class: "input", placeholder: "手动添加模型名，回车" });
+            addInput.addEventListener("keydown", async (e) => {
+              if (e.key !== "Enter" || !addInput.value.trim()) return;
+              c.models = [...new Set([...c.models, addInput.value.trim()])]; conf[P.id] = c; await saveConf(conf); draw();
+            });
+            const fetchBtn = h("button", { class: "btn small", onclick: async () => {
+              fetchBtn.disabled = true; fetchBtn.textContent = "获取中…";
+              const lr = await api.video.chars.listModels(P.id).catch((e) => ({ ok: false, error: e.message }));
+              fetchBtn.disabled = false; fetchBtn.textContent = "获取可用模型";
+              if (lr && lr.ok) {
+                fetched[P.id] = lr.models;
+                window.Shell.toast(lr.fetched ? `拿到 ${lr.models.length} 个生图模型，勾上你要用的` : `这家不提供模型列表（${lr.error || "未知原因"}），已列出常用模型`, lr.fetched ? "success" : "info", 5000);
+                draw();
+              } else window.Shell.toast((lr && lr.error) || "获取失败", "error");
+            } }, "获取可用模型");
+            const baseInput = h("input", { class: "input", placeholder: P.base ? `留空用默认 ${P.base}` : "必填，如 https://xxx.com/v1", value: c.baseUrl || "",
+              oninput: debounce(() => { c.baseUrl = baseInput.value.trim(); conf[P.id] = c; saveConf(conf); }, 400) });
+            return h("div", { class: "image-provider-card" },
+              h("div", { class: "set-title" }, P.label, P.hasKey ? h("span", { class: "muted small-text" }, `  已启用 ${c.models.length} 个模型`) : h("span", { class: "muted small-text" }, "  未保存 Key")),
+              keyRow(`${P.label.replace(/（.*?）/g, "")} API Key`, P.keyHint, () => api.video.chars.keyStatus(P.id), async (v) => { const x = await api.video.chars.setKey(v, P.id); setTimeout(draw, 50); return x; }),
+              row("要用的模型", "勾上的模型才会出现在生图时的“用哪些模型”里；“无参考图”的模型只按文字生成，人物可能不像", h("div", {}, chips, h("div", { class: "actions" }, addInput, fetchBtn)), { stack: true }),
+              row("接口地址", P.id === "custom" ? "中转/其他服务商必填" : "一般留空", baseInput, { stack: true }));
+          });
           dyn.replaceChildren(
-            row("服务商", "火山方舟和 OpenAI gpt-image 能带参考图，人物最像；智谱 CogView 只能按文字生成", provSel),
-            row("模型", refsOk ? "这个模型会带上角色的三视图/面部特写当参考图" : "这个模型不支持参考图，只按外貌文字生成，人物可能每次不一样", h("div", { class: "actions" }, modelSel, modelInput), { stack: true }),
-            row("接口地址", `留空用默认 ${P.base || "（其他服务商必须填，如 https://xxx.com/v1）"}`, textInput("imageBaseUrl", P.base || "https://xxx.com/v1"), { stack: true }),
-            keyRow(`${P.label} API Key`, P.keyHint, () => api.video.chars.keyStatus(pid), (v) => api.video.chars.setKey(v, pid)));
+            row("默认模型", "只勾一个模型生图时默认用它；每家的 Key 分开存，互不影响", defSel, { stack: true }),
+            ...cards);
         };
         draw();
       },
