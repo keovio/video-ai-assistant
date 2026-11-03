@@ -1049,7 +1049,16 @@ setupVideoIpc({
   getImageKey: (p = "ark") => ttsSecrets.get("imageApiKey." + p) || (p === "ark" ? ttsSecrets.get("imageApiKey") : "")
     || ((p === "zhipu" && /bigmodel\.cn/i.test(settings.get("aiBaseUrl") || "")) || (p === "openai" && /api\.openai\.com/i.test(settings.get("aiBaseUrl") || "https://api.openai.com")) ? ttsSecrets.get("aiApiKey") : ""),
   imageFetchImpl: makeFetch(Math.max(AI_TIMEOUT_MS, 180000)),
-  copyImage: (p) => { const { clipboard, nativeImage } = require("electron"); clipboard.writeImage(nativeImage.createFromPath(p)); },
+  // 0.6.50：Electron 44 的 clipboard 改成了异步 write([ClipboardItem])，没有 writeImage 了；两种都兼容
+  copyImage: async (p) => {
+    const { clipboard, nativeImage } = require("electron");
+    const img = nativeImage.createFromPath(p);
+    if (img.isEmpty()) throw new Error("图片读取失败");
+    if (typeof clipboard.writeImage === "function") return clipboard.writeImage(img);
+    const CI = electron.ClipboardItem || globalThis.ClipboardItem;
+    if (typeof clipboard.write !== "function" || !CI) throw new Error("当前版本不支持复制图片");
+    await clipboard.write([new CI({ "image/png": new Blob([img.toPNG()], { type: "image/png" }) })]);
+  },
 });
 
 // ---------------- CI 冒烟测试 ----------------
