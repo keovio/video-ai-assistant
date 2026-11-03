@@ -21,6 +21,7 @@
     title: "合成导出",
     icon: "film",
     order: 25,
+    hidden: true, navParent: "projects", // 0.6.45：项目子页面
     render(root) {
       root.classList.add("page-wide");
       browser = window.EmbedBrowser.create({
@@ -31,7 +32,8 @@
       api.video.downloads.onChanged(() => { if (root.isConnected && currentId && !root.hidden) load(root).catch(() => {}); });
       root._bar = window.ProjectPicker.bar({
         onSwitch: (id) => { currentId = id; return load(root); },
-        actions: [h("button", { class: "btn", onclick: () => window.Shell.navigate("editor") }, "← 分镜编辑")],
+        step: "render",
+        actions: [h("button", { class: "btn", onclick: () => window.Shell.navigate("editor") }, "← 上一步：分镜编辑")],
       });
       root._side = h("div", { class: "workbench-side", id: "render-body" });
       root.append(root._bar.el, h("div", { class: "workbench" }, browser.el, root._side));

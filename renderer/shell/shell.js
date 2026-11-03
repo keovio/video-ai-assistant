@@ -227,7 +227,8 @@
     }
     next.root.hidden = false;
     current = id;
-    for (const b of document.querySelectorAll("#nav .nav-item")) b.classList.toggle("active", b.dataset.page === id);
+    const navId = next.def.navParent || id; // 0.6.45：子页面（不在导航里）高亮所属的导航项
+    for (const b of document.querySelectorAll("#nav .nav-item")) b.classList.toggle("active", b.dataset.page === navId);
     document.title = `${next.def.title} - ${ctx.productName || ""}`.replace(/ - $/, "");
     if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
     try { next.def.onShow && next.def.onShow(next.root, ctx); } catch (err) { reportError(err); }

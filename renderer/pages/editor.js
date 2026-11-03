@@ -72,12 +72,14 @@
     title: "分镜编辑",
     icon: "note",
     order: 20,
+    hidden: true, navParent: "projects", // 0.6.45：项目子页面，从项目打开，顶部向导切换
     render(root) {
       editorRoot = root;
       root.classList.add("page-wide");
       root._bar = window.ProjectPicker.bar({
         beforeSwitch: () => autoSave(root),
         onSwitch: (id) => load(root, id),
+        step: "editor",
       });
       root._body = h("div", { id: "editor-body" });
       root.append(root._bar.el, root._body);
@@ -417,7 +419,7 @@
         await load(root, currentId);
       } }, "放弃改动"),
       h("button", { class: "btn primary", id: "btn-save", title: "保存（Ctrl/⌘ S）", onclick: () => save() }, "保存"),
-      h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "合成导出 →"));
+      h("button", { class: "btn", onclick: () => window.Shell.navigate("render") }, "下一步：合成导出 →"));
 
     body.append(
       infoRow,

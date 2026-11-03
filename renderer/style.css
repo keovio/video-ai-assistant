@@ -755,3 +755,18 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .char-img-foot { display: flex; gap: 4px; align-items: center; padding: 4px; }
 .char-img-foot select { flex: 1; min-width: 0; }
 .char-img .one-line { padding: 0 6px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 0.6.45 项目流程向导 */
+.wizard { display: inline-flex; align-items: center; gap: 2px; padding-right: 10px; margin-right: 4px; border-right: 1px solid var(--line); }
+.wizard-step { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.wizard-step:hover:not(:disabled) { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+.wizard-step.active { background: var(--accent, #2f6bff); color: #fff; cursor: default; font-weight: 600; }
+.wizard-step.back { padding-left: 4px; }
+.wizard-sep { color: var(--muted); opacity: .6; }
+.modal-analysis { width: min(980px, 94vw); max-height: 90vh; overflow: auto; }
+.an-meta { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.an-grid { display: grid; grid-template-columns: 88px 1fr; gap: 6px 12px; font-size: 13px; margin: 6px 0 12px; }
+.an-grid dt { color: var(--muted); }
+.an-grid dd { margin: 0; white-space: pre-wrap; }
+.an-shot { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.an-shot-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.an-shot .shot-prompt { cursor: pointer; }

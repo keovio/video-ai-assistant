@@ -228,7 +228,7 @@
     const title = a.scriptTitle || a.sourceTitle || "未命名分析";
     const shots = Array.isArray(a.shots) ? a.shots.length : 0;
     const speech = Array.isArray(a.shots) && a.shots.some((s) => s && s.narration);
-    return h("div", { class: "lib-card lib-analysis", onclick: () => window.VideoAnalysis && window.VideoAnalysis.open(a.id) },
+    return h("div", { class: "lib-card lib-analysis", onclick: () => analysisModal(a.id) },
       h("div", { class: "lib-card-body" },
         h("div", { class: "lib-card-meta" },
           h("span", { class: "chip" }, SITE[a.site] || "网页"),
@@ -240,7 +240,7 @@
         h("div", { class: "lib-card-meta" }, [a.author || "未知作者", a.musicName ? "♪ " + a.musicName.slice(0, 30) : "", fmtWhen(a.createdAt)].filter(Boolean).join(" · ")),
         a.sourceUrl ? h("div", { class: "muted small-text source-url", title: a.sourceUrl }, a.sourceUrl) : null,
         h("div", { class: "lib-actions" },
-          h("button", { class: "btn small primary", onclick: (e) => { e.stopPropagation(); window.VideoAnalysis && window.VideoAnalysis.open(a.id); } }, "打开"),
+          h("button", { class: "btn small primary", onclick: (e) => { e.stopPropagation(); analysisModal(a.id); } }, "打开"),
           a.sourceUrl ? h("button", { class: "btn small", onclick: (e) => {
             e.stopPropagation();
             if (!/^https?:\/\//i.test(a.sourceUrl)) { window.Shell.toast("原地址无效", "error"); return; }
@@ -255,6 +255,63 @@
             if (await call(api.video.analyses.remove(a.id))) { window.Shell.toast("已删除"); load(root); }
           } }, "删除"))));
   }
+
+
+  // 0.6.45：在作品库里直接弹窗看分析，不跳到“视频分析”页
+  const STYLE_LABELS = { visual: "整体画面", camera: "镜头", pacing: "节奏", mood: "氛围", colorLight: "色彩光线", sound: "声音音乐", hooks: "开头钩子" };
+  async function analysisModal(id) {
+    const r = await api.video.analyses.get(id).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { window.Shell.toast((r && r.error) || "读取分析失败", "error"); return; }
+    const a = r.analysis;
+    const shots = Array.isArray(a.shots) ? a.shots : [];
+    const promptOf = (s) => String(s.imagePrompt || s.visual || "").trim();
+    const copy = async (t, m) => { try { await navigator.clipboard.writeText(t); window.Shell.toast(m, "success"); } catch (e) { window.Shell.toast("复制失败：" + e.message, "error"); } };
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    const st = a.style || {}; const sk = a.skill || {};
+    const dl = (pairs) => h("dl", { class: "an-grid" }, ...pairs.filter(([, v]) => v).flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
+    const importBtn = h("button", { class: "btn primary", onclick: async () => {
+      importBtn.disabled = true;
+      const res = await api.video.analyses.import(a.id).catch((e) => ({ ok: false, error: e.message }));
+      importBtn.disabled = false;
+      if (!res || !res.ok) { window.Shell.toast((res && res.error) || "导入失败", "error"); return; }
+      if (window.StyleSkill) window.StyleSkill.set(res.project.id, a.id);
+      close();
+      window.VideoApp.openProject(res.project.id);
+      window.Shell.navigate("editor");
+      window.Shell.toast("已按分镜新建项目", "success");
+    } }, "导入到新项目");
+    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+      h("div", { class: "modal modal-form modal-wide modal-analysis", role: "dialog" },
+        h("h2", {}, a.scriptTitle || a.sourceTitle || "未命名分析"),
+        h("div", { class: "an-meta" },
+          a.author ? h("span", { class: "chip" }, a.author) : null,
+          a.musicName ? h("span", { class: "chip" }, "♪ " + a.musicName.slice(0, 40)) : null,
+          h("span", { class: "chip" }, `${shots.length} 镜`),
+          h("span", { class: "chip" }, a.scriptNarration ? "有口播" : "无口播"),
+          h("span", { class: "chip" }, fmtWhen(a.createdAt))),
+        h("h3", {}, "风格"),
+        dl(Object.entries(STYLE_LABELS).map(([k, l]) => [l, st[k]])),
+        sk.name ? h("h3", {}, "风格 skill") : null,
+        sk.name ? dl([["名字", sk.name], ["说明", sk.description], ["风格提示词", sk.prompt]]) : null,
+        a.scriptNarration ? h("h3", {}, "口播") : null,
+        a.scriptNarration ? h("p", { class: "small-text" }, a.scriptNarration) : null,
+        h("h3", {}, h("span", { class: "grow" }, "分镜"),
+          shots.length ? h("button", { class: "btn small", onclick: () => copy(shots.map((s, i) => promptOf(s) ? `第 ${i + 1} 镜（${s.seconds || 0} 秒）：${promptOf(s)}` : "").filter(Boolean).join("\n\n"), "已复制全部画面提示词") }, "全部复制") : null),
+        ...shots.map((s, i) => h("div", { class: "an-shot" },
+          h("div", { class: "an-shot-head" }, h("b", {}, `第 ${i + 1} 镜`), h("span", { class: "chip" }, `${s.seconds || 0} 秒`), h("span", { class: "grow" }),
+            promptOf(s) ? h("button", { class: "btn small", onclick: () => copy(promptOf(s), `第 ${i + 1} 镜提示词已复制`) }, "复制") : null),
+          s.narration ? h("p", { class: "small-text" }, "口播：" + s.narration) : null,
+          promptOf(s) ? h("div", { class: "shot-prompt", title: "点一下复制", onclick: () => copy(promptOf(s), `第 ${i + 1} 镜提示词已复制`) }, promptOf(s)) : null)),
+        h("div", { class: "actions end" },
+          h("button", { class: "btn ghost", title: "到视频分析页修改并重新保存", onclick: () => { close(); window.VideoAnalysis && window.VideoAnalysis.open(a.id); } }, "去编辑"),
+          a.videoPath ? h("button", { class: "btn", onclick: () => call(api.video.analyses.openVideo(a.id)) }, "播放原视频") : null,
+          importBtn,
+          h("button", { class: "btn", onclick: close }, "关闭"))));
+    document.body.append(overlay);
+  }
+  window.AnalysisModal = { open: analysisModal };
 
   // 0.6.36 原视频卡片：分析时下载/录制的视频文件
   // 0.6.40：原视频卡片：封面 + 直接分析
@@ -285,7 +342,8 @@
         if (r && r.ok) {
           window.Shell.toast("分析完成", "success");
           const id = r.record && r.record.id;
-          if (id && window.VideoAnalysis) window.VideoAnalysis.open(id); else load(root);
+          load(root);
+          if (id) analysisModal(id);
         } else if (!(r && r.code === "TASK_CANCELLED")) window.Shell.toast("分析失败：" + ((r && r.error) || "未知错误"), "error");
       } finally { analyzing.delete(x.name); if (analyzeBtn.isConnected) { analyzeBtn.disabled = false; analyzeBtn.textContent = x.analysisId ? "重新分析" : "分析"; } }
     } }, busy ? "分析中…" : x.analysisId ? "重新分析" : "分析");
@@ -300,7 +358,7 @@
         h("div", { class: "lib-card-meta" }, fmtWhen(x.createdAt)),
         h("div", { class: "lib-actions" },
           analyzeBtn,
-          x.analysisId ? h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); window.VideoAnalysis && window.VideoAnalysis.open(x.analysisId); } }, "看分析") : null,
+          x.analysisId ? h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); analysisModal(x.analysisId); } }, "看分析") : null,
           h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); call(api.video.library.openSource(x.name, true)); } }, "文件夹"),
           h("button", { class: "btn small danger-ghost", onclick: async (e) => {
             e.stopPropagation();
@@ -315,7 +373,7 @@
     const name = sk.name || "未命名 skill";
     const from = a.sourceTitle || a.scriptTitle || a.sourceUrl || "";
     const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
-    return h("div", { class: "lib-card lib-analysis lib-skill", onclick: () => window.VideoAnalysis && window.VideoAnalysis.open(a.id) },
+    return h("div", { class: "lib-card lib-analysis lib-skill", onclick: () => analysisModal(a.id) },
       h("div", { class: "lib-card-body" },
         h("div", { class: "lib-card-meta" }, h("span", { class: "chip ok" }, "skill"), a.site ? h("span", { class: "chip" }, SITE[a.site] || "网页") : null),
         h("div", { class: "lib-card-title", title: name }, name),
@@ -333,9 +391,8 @@
             if (!pid) { window.Shell.toast("先在项目页打开一个项目", "error"); return; }
             window.StyleSkill.set(pid, a.id);
             window.Shell.toast(`已用于当前项目：复制画面时带上“${name}”风格`, "success");
-            window.Shell.navigate("render");
           }) }, "用于当前项目"),
-          h("button", { class: "btn small", onclick: stop(() => window.VideoAnalysis && window.VideoAnalysis.open(a.id)) }, "编辑"),
+          h("button", { class: "btn small", onclick: stop(() => analysisModal(a.id)) }, "查看"),
           h("button", { class: "btn small danger-ghost", onclick: stop(async () => {
             if (!await window.Shell.confirm(`删除 skill 文件“${name}”吗？分析记录会保留。`)) return;
             if (await call(api.video.analyses.removeSkill(a.id))) { window.Shell.toast("已删除 skill 文件"); load(root); }

@@ -63,12 +63,20 @@
   }
 
   // 项目切换栏。opts.beforeSwitch(): 返回 false 取消切换；opts.onSwitch(id): 切换后回调；opts.actions: 右侧按钮
-  function bar({ beforeSwitch, onSwitch, actions = [] } = {}) {
+  // 0.6.45：opts.step = "editor" | "render"：显示流程向导 项目 › ① 分镜编辑 › ② 合成导出
+  function wizard(step) {
+    const steps = [["editor", "① 分镜编辑"], ["render", "② 合成导出"]];
+    return h("nav", { class: "wizard", "aria-label": "流程" },
+      h("button", { class: "wizard-step back", title: "回到项目列表", onclick: () => window.Shell.navigate("projects") }, "项目"),
+      ...steps.flatMap(([id, label]) => [h("span", { class: "wizard-sep" }, "›"),
+        h("button", { class: "wizard-step" + (id === step ? " active" : ""), disabled: id === step, onclick: () => window.Shell.navigate(id) }, label)]));
+  }
+  function bar({ beforeSwitch, onSwitch, actions = [], step = "" } = {}) {
     const select = h("select", { class: "input project-switch", title: "切换项目" });
     const meta = h("span", { class: "project-meta" });
     const right = h("div", { class: "project-bar-actions" }, ...actions);
     const el = h("header", { class: "project-bar" },
-      h("span", { class: "project-bar-icon" }, icon("folder")), select, meta, h("span", { class: "spacer" }), right);
+      step ? wizard(step) : null, h("span", { class: "project-bar-icon" }, icon("folder")), select, meta, h("span", { class: "spacer" }), right);
     let projects = [];
 
     select.addEventListener("change", async () => {

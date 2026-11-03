@@ -1208,7 +1208,7 @@ function runSmokeTest() {
     })()`, true), TIMEOUT_MS, "页面脚本");
     const result = { ...out, layerVersion: LAYER_VERSION, boot: { source: BOOT.source, version: BOOT.version, bundled: BOOT.bundledVersion, electron: BOOT.electron }, platform: process.platform, rendererErrors: errors };
     const ok = out.api && out.nodeHidden && out.card && out.name === config.productName && out.version.includes(LAYER_VERSION)
-      && ["home", "projects", "editor", "render", "douyin", "tasks", "logs", "settings"].every((p) => out.navs.includes(p)) && out.settingsVisible
+      && ["home", "projects", "douyin", "tasks", "logs", "settings"].every((p) => out.navs.includes(p)) && out.settingsVisible
       && /^(light|dark)$/.test(out.theme) && out.task === "done" && out.logCount > 0 && out.dock && out.look && out.videoOk && out.videoM2Ok && out.videoM3Ok && out.videoM4Ok && !errors.length;
     console.log((ok ? "SMOKE OK " : "SMOKE FAIL ") + JSON.stringify(result));
     clearTimeout(hardStop);
