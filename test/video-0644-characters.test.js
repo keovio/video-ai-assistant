@@ -55,12 +55,13 @@ test("生图：火山方舟 JSON 带参考图", async () => {
 
 test("生图：智谱只文生图，返回 url 再下载", async () => {
   const log = [];
-  const out = await imageGen.generateImage({ fetchImpl: fakeFetch(log, { data: [{ url: "https://cdn.x/a.png" }] }), provider: "zhipu", apiKey: "k", prompt: "p", images: refs, size: imageGen.sizeFor("16:9", { provider: "zhipu" }) });
+  const out = await imageGen.generateImage({ fetchImpl: fakeFetch(log, { data: [{ url: "https://cdn.x/a.png" }] }), provider: "zhipu", apiKey: "k", prompt: "p", images: refs, size: imageGen.sizeFor("16:9", { provider: "zhipu", model: "glm-image" }) });
   assert.strictEqual(out.images[0].toString(), "dl");
   assert.strictEqual(out.refsIgnored, true);
   assert.match(log[0].url, /open\.bigmodel\.cn\/api\/paas\/v4\/images\/generations$/);
-  assert.strictEqual(log[0].body.model, "cogview-4-250304");
-  assert.strictEqual(log[0].body.size, "1344x768");
+  assert.strictEqual(log[0].body.model, "glm-image");
+  assert.strictEqual(log[0].body.size, "1728x960");
+  assert.strictEqual(imageGen.sizeFor("9:16", { provider: "zhipu", model: "cogview-4" }), "768x1344");
   assert.strictEqual(log[0].body.image, undefined);
 });
 
