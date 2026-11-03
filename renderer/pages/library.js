@@ -282,7 +282,7 @@
       window.Shell.navigate("editor");
       window.Shell.toast("已按分镜新建项目", "success");
     } }, "导入到新项目");
-    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
       h("div", { class: "modal modal-form modal-wide modal-analysis", role: "dialog" },
         h("h2", {}, a.scriptTitle || a.sourceTitle || "未命名分析"),
         h("div", { class: "an-meta" },
@@ -420,7 +420,7 @@
       if (!res || !res.ok) window.Shell.toast((res && res.error) || "打开上传页失败", "error");
     };
     const field = (label, el, hint) => h("label", { class: "form-field" }, h("span", { class: "form-label" }, label), el, hint ? h("span", { class: "form-hint" }, hint) : "");
-    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) finish(); } },
+    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
       h("div", { class: "modal modal-form", role: "dialog", "aria-modal": "true" },
         h("h3", { class: "modal-title" }, "存到草稿箱"),
         h("div", { class: "form-field" }, h("span", { class: "form-label" }, "平台"), seg),

@@ -50,7 +50,7 @@
         if (e.key === "Enter" && !e.isComposing && document.activeElement && document.activeElement.tagName !== "SELECT") { e.preventDefault(); submit(); }
       };
       const field = (label, el, hint) => h("label", { class: "form-field" }, h("span", { class: "form-label" }, label), el, hint ? h("span", { class: "form-hint" }, hint) : "");
-      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) finish(null); } },
+      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
         h("div", { class: "modal modal-form", role: "dialog", "aria-modal": "true" },
           h("h3", { class: "modal-title" }, "新建项目"),
           field("标题", title, "可空，默认“未命名项目”，之后在分镜编辑里也能改"),

@@ -28,7 +28,7 @@
   }
   function modal(title, ...children) {
     const close = () => overlay.remove();
-    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
       h("div", { class: "modal modal-form modal-wide modal-char", role: "dialog" }, h("h2", {}, title), ...children,
         h("div", { class: "actions end" }, h("button", { class: "btn", onclick: close }, "关闭"))));
     document.body.append(overlay);

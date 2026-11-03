@@ -817,3 +817,6 @@ kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border: 1px solid
 .ref-strip { display: flex; gap: 6px; flex-wrap: wrap; }
 .ref-strip:empty { display: none; }
 .ref-strip img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; cursor: zoom-in; border: 1px solid var(--border, #ccc); }
+/* 0.6.53 点弹窗外面：不关闭，轻轻抖一下 */
+@keyframes modalNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.modal-nudge { animation: modalNudge .25s ease-in-out 2; }

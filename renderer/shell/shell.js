@@ -1,4 +1,11 @@
 "use strict";
+// 0.6.53：点弹窗外面不再关闭（防止误点丢掉正在填的内容），只抖一下提示；用 关闭 按钮或 Esc 关
+function modalNudge(overlay) {
+  const box = overlay && overlay.querySelector(".modal");
+  if (!box) return;
+  box.classList.remove("modal-nudge"); void box.offsetWidth; box.classList.add("modal-nudge");
+}
+window.modalNudge = modalNudge;
 // 通用外壳（页面侧）：页面注册与导航、侧边栏折叠/拖动宽度、深浅色、提示条、小工具。
 // 页面只通过 window.app（preload 暴露）和主进程通信。
 //
@@ -383,7 +390,7 @@
     return new Promise((resolve) => {
       const done = (v) => { overlay.remove(); document.removeEventListener("keydown", onKey); resolve(v); };
       const onKey = (e) => { if (e.key === "Escape") done(false); if (e.key === "Enter") done(true); };
-      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) done(false); } },
+      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
         h("div", { class: "modal", role: "dialog", "aria-modal": "true" },
           h("p", { class: "modal-text" }, message),
           h("div", { class: "actions end" },

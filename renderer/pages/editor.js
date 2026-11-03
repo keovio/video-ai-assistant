@@ -497,7 +497,7 @@
       const runBtn = h("button", { class: "btn primary" }, "开始改写");
       const applyBtn = h("button", { class: "btn primary", hidden: true }, "全部替换");
       const close = () => overlay.remove();
-      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+      const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
         h("div", { class: "modal modal-form modal-wide modal-rewrite", role: "dialog" },
           h("h2", {}, "AI 优化提示词"), mode, skillField, refField, status, result,
           h("div", { class: "actions end" }, h("button", { class: "btn", onclick: close }, "取消"), runBtn, applyBtn)));
