@@ -186,7 +186,8 @@
       const wb = el.parentElement;
       el.classList.toggle("min", e.min);
       if (!wb || !wb.classList.contains("workbench")) return;
-      if (resizer.parentElement !== wb) el.after(resizer);
+      // 0.6.46：.workbench.side-left 时操作栏在左、浏览器在右，拖动条放在浏览器前面
+      if (resizer.parentElement !== wb) { if (wb.classList.contains("side-left")) el.before(resizer); else el.after(resizer); }
       wb.classList.toggle("embed-min", e.min);
       resizer.hidden = e.min;
       const w = Number(localStorage.getItem(sideKey));
@@ -202,7 +203,8 @@
       const rect = wb.getBoundingClientRect();
       let w = 0;
       const move = (m) => {
-        w = Math.round(Math.max(300, Math.min(rect.width - 320, rect.right - m.clientX)));
+        const raw = wb.classList.contains("side-left") ? m.clientX - rect.left : rect.right - m.clientX;
+        w = Math.round(Math.max(300, Math.min(rect.width - 320, raw)));
         wb.style.setProperty("--side-w", w + "px");
       };
       const up = (u) => {

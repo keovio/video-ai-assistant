@@ -1,6 +1,6 @@
 "use strict";
-// 抖音分析页（M4）：左侧是内嵌抖音视图（持久会话，登录一次后保持），
-// 右侧是分析面板：提取当前视频信息 -> AI 分析（风格拆解 + skill + 脚本分镜）
+// 抖音分析页（M4）：右侧是内嵌抖音视图（持久会话，登录一次后保持），
+// 左侧是分析面板：提取当前视频信息 -> AI 分析（风格拆解 + skill + 脚本分镜）
 // -> 编辑 -> 保存分析记录 -> 导入到项目。选择器未验证、提取不到时走手动粘贴兜底，
 // 没有 AI Key 时分析按钮禁用并提示去设置，绝不编造分析结果。
 (function () {
@@ -15,7 +15,7 @@
   };
   const STYLE_KEYS = Object.keys(STYLE_LABELS);
 
-  // 左侧内嵌浏览器（进页面自动打开抖音，登录一次后保持），见 embed-browser.js
+  // 右侧内嵌浏览器（进页面自动打开抖音，登录一次后保持），见 embed-browser.js
   let browser = null;
   const viewOpened = () => !!(browser && browser.isOpen());
   let aiReady = false;
@@ -82,14 +82,14 @@
       kind: "douyin", pageId: "douyin", title: "视频网站", api: api.video.douyin,
       emptyText: "支持抖音、B 站、YouTube（YouTube 需要你的网络能打开），也可以打开其他视频网站。登录一次后会保持。",
     });
-    // 右侧面板：当前视频 + 分析结果 + 已保存的分析，全部由 renderPanel 重绘
+    // 左侧面板：当前视频 + 分析结果 + 已保存的分析，全部由 renderPanel 重绘
     const panel = h("div", { id: "douyin-panel", class: "workbench-side" });
 
     body.append(
       h("header", { class: "page-head compact" },
         h("div", {}, h("h1", {}, "视频分析"),
-          h("p", { class: "sub" }, "在左边打开抖音、B 站或 YouTube 的一个视频，然后点右边的“分析当前视频”。B 站和 YouTube 有字幕时会一起读。"))),
-      h("div", { class: "workbench" }, browser.el, panel));
+          h("p", { class: "sub" }, "在右边打开抖音、B 站或 YouTube 的一个视频，然后点左边的“分析当前视频”。B 站和 YouTube 有字幕时会一起读。"))),
+      h("div", { class: "workbench side-left" }, panel, browser.el));
     root._panel = panel;
     renderPanel(root);
   }
@@ -253,7 +253,7 @@
         h("p", { class: "muted small-text" }, (currentInfo.caption || "（未读到文案）").slice(0, 160)),
         chips.length ? h("div", { class: "stat-line" }, ...chips) : "");
     } else {
-      info.append(h("p", { class: "muted small-text" }, "在左边点开一个视频（进入视频详情页），再点下面的按钮。"));
+      info.append(h("p", { class: "muted small-text" }, "在右边点开一个视频（进入视频详情页），再点下面的按钮。"));
     }
 
     const linkInput = h("input", { class: "input field-full", placeholder: "视频链接（可选，抖音 / B 站 / YouTube）", value: d.sourceUrl || (currentInfo && currentInfo.url) || "" });
@@ -483,7 +483,7 @@
     const manualText = [captionInput ? captionInput.value : "", linkInput ? linkInput.value : ""].filter(Boolean).join("\n");
     let videoInfo = currentInfo;
     if (mode === "extract") {
-      setProgress(root, "正在读取左侧视频信息…");
+      setProgress(root, "正在读取右侧视频信息…");
       try {
         const r = await api.video.douyin.extract();
         if (!r.ok) throw new Error(r.error || "提取失败");
@@ -491,7 +491,7 @@
         videoInfo = r.info;
         window.Shell.toast("已读到当前视频信息，开始分析…", "success");
       } catch (e) {
-        const msg = (e && e.message) || "提取失败：请确认已在左侧打开视频详情页，或用下面手动粘贴";
+        const msg = (e && e.message) || "提取失败：请确认已在右侧打开视频详情页，或用下面手动粘贴";
         setProgress(root, "没读到视频信息：" + msg, "warn");
         window.Shell.toast(msg, "error");
         return;
@@ -505,7 +505,7 @@
       }
       // 0.6.25：只贴了链接、没贴文案时，AI 什么都看不到，只会瞎编。改为在左边打开这个链接，读到信息并截画面后再分析。
       if (link && !caption && /^https?:\/\//i.test(link)) {
-        setProgress(root, "正在左边打开链接并读取视频信息…");
+        setProgress(root, "正在右边打开链接并读取视频信息…");
         try {
           await api.video.embed.nav("douyin", "newTab", link);
           let info = null;
@@ -514,7 +514,7 @@
             const r = await api.video.douyin.extract().catch(() => null);
             if (r && r.ok && r.info && (r.info.caption || r.info.title || r.info.transcript || r.info.author)) info = r.info;
           }
-          if (!info) throw new Error("页面没加载出来或需要登录：等左边视频播放后点“分析当前视频”，或把文案贴进下面再手动分析");
+          if (!info) throw new Error("页面没加载出来或需要登录：等右边视频播放后点“分析当前视频”，或把文案贴进下面再手动分析");
           currentInfo = info; videoInfo = info; mode = "extract";
           window.Shell.toast("已读到视频信息，开始分析…", "success");
         } catch (e) {

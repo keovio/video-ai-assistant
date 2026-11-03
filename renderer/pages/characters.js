@@ -34,7 +34,7 @@
     document.body.append(overlay);
     return { overlay, close };
   }
-  // 去合成导出页左边浏览器，新开即梦标签
+  // 去合成导出页右边浏览器，新开即梦标签
   function openJimeng() {
     window.Shell.navigate("render");
     setTimeout(() => api.video.embed.nav("jimeng", "newTab", JIMENG).catch(() => {}), 300);

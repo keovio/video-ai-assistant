@@ -770,3 +770,9 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .an-shot { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
 .an-shot-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .an-shot .shot-prompt { cursor: pointer; }
+/* 0.6.46 合成导出、视频分析：操作栏在左，浏览器在右（和分镜编辑一致） */
+.workbench.side-left { grid-template-columns: var(--side-w, minmax(360px, 440px)) 8px minmax(0, 1fr); }
+.workbench.side-left.embed-min { grid-template-columns: minmax(0, 1fr) 34px; }
+.workbench.side-left .workbench-side { padding-right: 0; padding-left: 2px; }
+@media (max-width: 1100px) { .workbench.side-left, .workbench.side-left.embed-min { grid-template-columns: 1fr; } }
+.workbench.side-left .browser-min-strip > span:first-child { display: inline-block; transform: scaleX(-1); }

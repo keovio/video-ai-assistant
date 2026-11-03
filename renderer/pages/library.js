@@ -425,7 +425,7 @@
         h("h3", { class: "modal-title" }, "存到草稿箱"),
         h("div", { class: "form-field" }, h("span", { class: "form-label" }, "平台"), seg),
         field("文案", caption, "会自动填进上传页（也会复制到剪贴板备用）"),
-        h("p", { class: "muted small-text" }, "会在“视频分析”左边的浏览器里打开创作者上传页。第一次需要登录（建议扫码或手机号/邮箱登录），登录后自动放入成片和文案，最后你检查一下点“保存草稿”。"),
+        h("p", { class: "muted small-text" }, "会在“视频分析”右边的浏览器里打开创作者上传页。第一次需要登录（建议扫码或手机号/邮箱登录），登录后自动放入成片和文案，最后你检查一下点“保存草稿”。"),
         h("div", { class: "actions end" }, h("button", { class: "btn", onclick: finish }, "取消"), h("button", { class: "btn primary", onclick: go }, "打开上传页"))));
     document.body.append(overlay);
     document.addEventListener("keydown", onKey);

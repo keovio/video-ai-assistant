@@ -1,6 +1,6 @@
 "use strict";
-// 合成导出页：左边是即梦内嵌浏览器（进页面自动打开，登录一次后保持），
-// 右边是操作面板：合成（开始/进度/烧字幕开关）→ 最近成片（打开/文件夹/重跑/提示）→ 每镜素材（配音与画面状态、
+// 合成导出页：右边是即梦内嵌浏览器（进页面自动打开，登录一次后保持），
+// 左边是操作面板：合成（开始/进度/烧字幕开关）→ 最近成片（打开/文件夹/重跑/提示）→ 每镜素材（配音与画面状态、
 // 复制画面提示词 / 导入 / 清除片段）。0.6.14 起去掉“即梦生成”自动化，提示词直接显示，用户自己去生成网站操作。
 (function () {
   const { h } = window.Shell;
@@ -26,7 +26,7 @@
       root.classList.add("page-wide");
       browser = window.EmbedBrowser.create({
         kind: "jimeng", pageId: "render", title: "生成网站", api: api.video.jimeng,
-        emptyText: "可以用即梦、可灵、海螺、Vidu 等任意网站生成视频；在这里下载的视频会自动收进右边“浏览器下载”。",
+        emptyText: "可以用即梦、可灵、海螺、Vidu 等任意网站生成视频；在这里下载的视频会自动收进左边“浏览器下载”。",
       });
       // 浏览器里下载完成时刷新右栏（只在本页可见时）
       api.video.downloads.onChanged(() => { if (root.isConnected && currentId && !root.hidden) load(root).catch(() => {}); });
@@ -36,7 +36,7 @@
         actions: [h("button", { class: "btn", onclick: () => window.Shell.navigate("editor") }, "← 上一步：分镜编辑")],
       });
       root._side = h("div", { class: "workbench-side", id: "render-body" });
-      root.append(root._bar.el, h("div", { class: "workbench" }, browser.el, root._side));
+      root.append(root._bar.el, h("div", { class: "workbench side-left" }, root._side, browser.el));
     },
     async onShow(root) {
       currentId = window.VideoApp.currentProjectId();
@@ -61,7 +61,7 @@
         window.VideoApp.openProject(id); currentId = id;
         await root._bar.refresh();
         await load(root);
-      }, "左边的即梦可以先登录好；合成要先选一个项目。")));
+      }, "右边的即梦可以先登录好；合成要先选一个项目。")));
     };
     if (!currentId) { showEmpty(); return; }
     let data;
@@ -273,7 +273,7 @@
           sel.value = charId;
           return sel;
         })()) : "",
-      h("p", { class: "muted small-text" }, "复制每镜的画面提示词，到左边任意生成网站（即梦、可灵、海螺、Vidu…）自己生成并下载，视频会出现在“浏览器下载”里，挂到对应镜头；也可以“导入”本机文件。"),
+      h("p", { class: "muted small-text" }, "复制每镜的画面提示词，到右边任意生成网站（即梦、可灵、海螺、Vidu…）自己生成并下载，视频会出现在“浏览器下载”里，挂到对应镜头；也可以“导入”本机文件。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 
     // ---- 浏览器下载（0.6.9）：左边任意生成网站里下载的视频，挂到某一镜 ----
@@ -305,7 +305,7 @@
       });
       downloadsCard = h("section", { class: "side-card" },
         h("h3", {}, h("span", { class: "grow" }, "浏览器下载"), h("button", { class: "btn small ghost", onclick: () => api.video.downloads.openFolder() }, "打开文件夹")),
-        h("p", { class: "muted small-text" }, "在左边网站里下载的视频会出现在这里，选好镜头点“挂上”。"),
+        h("p", { class: "muted small-text" }, "在右边网站里下载的视频会出现在这里，选好镜头点“挂上”。"),
         dlList);
     }
 
