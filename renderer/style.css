@@ -821,3 +821,7 @@ kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border: 1px solid
 @keyframes modalNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 .modal-nudge { animation: modalNudge .25s ease-in-out 2; }
 .image-provider-card { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+.chip-x { border: 0; background: none; cursor: pointer; padding: 0 0 0 4px; color: inherit; opacity: .6; font-size: 14px; line-height: 1; }
+.chip-x:hover { opacity: 1; color: var(--danger, #dc2626); }
+.image-provider-card > .row { display: flex; align-items: center; gap: 8px; }
+.image-provider-card .grow { flex: 1; }

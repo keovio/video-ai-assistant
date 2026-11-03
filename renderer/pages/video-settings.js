@@ -174,50 +174,64 @@
           const info = (r && r.ok && r.providers) || [];
           const conf = getConf();
           // 第一次保存时，把现在生效的（含旧设置迁移来的）启用模型写进去
-          for (const P of info) if (!conf[P.id]) conf[P.id] = { models: P.enabled || [], baseUrl: P.baseUrl || "" };
+          for (const P of info) if (!conf[P.id] || !Array.isArray(conf[P.id].models)) conf[P.id] = { ...(conf[P.id] || {}), models: P.enabled || [], baseUrl: (conf[P.id] && conf[P.id].baseUrl) || P.baseUrl || "" };
           const enabledAll = info.flatMap((P) => (P.hasKey ? P.modelInfo.map((m) => ({ p: P, m })) : []));
           const defSel = h("select", { class: "input", onchange: () => { const [pid, mid] = defSel.value.split("|"); window.Shell.saveSettings({ imageProvider: pid, imageModel: mid }); } },
             ...(enabledAll.length ? enabledAll.map(({ p: P, m }) => h("option", { value: P.id + "|" + m.id }, `${P.label.replace(/（.*?）/g, "")} · ${m.label}`)) : [h("option", { value: "" }, "先在下面存 Key、勾模型")]));
           if (r && r.ok) defSel.value = r.current + "|" + r.model;
           if (!defSel.value && enabledAll[0]) defSel.selectedIndex = 0;
-          const cards = info.map((P) => {
+          // 0.6.55：只显示自己加过的服务商；模型也只显示自己加的，从下拉或手填里加
+          const isAdded = (P) => { const c = conf[P.id] || {}; return c.added === true || (c.added !== false && (P.hasKey || (c.models || []).length > 0)); };
+          const shown = info.filter(isAdded);
+          const cards = shown.map((P) => {
             const c = conf[P.id];
             const preset = (P.models || []).map(([id]) => id);
-            const list = [...new Set([...preset, ...(fetched[P.id] || []), ...c.models])];
             const label = (id) => { const hit = (P.models || []).find(([m]) => m === id); return hit ? hit[1] : id; };
-            const chips = h("div", { class: "model-pick" }, ...list.map((id) => {
-              const cb = h("input", { type: "checkbox", checked: c.models.includes(id), onchange: async () => {
-                c.models = cb.checked ? [...new Set([...c.models, id])] : c.models.filter((x) => x !== id);
-                conf[P.id] = c; await saveConf(conf); draw();
-              } });
-              return h("label", { class: "model-chip", title: id }, cb, label(id));
-            }), list.length ? null : h("span", { class: "muted small-text" }, "点“获取可用模型”或手动添加"));
-            const addInput = h("input", { class: "input", placeholder: "手动添加模型名，回车" });
-            addInput.addEventListener("keydown", async (e) => {
-              if (e.key !== "Enter" || !addInput.value.trim()) return;
-              c.models = [...new Set([...c.models, addInput.value.trim()])]; conf[P.id] = c; await saveConf(conf); draw();
-            });
+            const setModels = async (models) => { c.models = models; c.added = true; conf[P.id] = c; await saveConf(conf); draw(); };
+            const chips = h("div", { class: "model-pick" }, ...c.models.map((id) =>
+              h("span", { class: "model-chip", title: id }, label(id),
+                h("button", { class: "chip-x", title: "移除", onclick: () => setModels(c.models.filter((x) => x !== id)) }, "×"))),
+              c.models.length ? null : h("span", { class: "muted small-text" }, "还没加模型"));
+            const candidates = [...new Set([...preset, ...(fetched[P.id] || [])])].filter((m) => !c.models.includes(m));
+            const pick = h("select", { class: "input", onchange: () => { if (pick.value) setModels([...c.models, pick.value]); } },
+              h("option", { value: "" }, candidates.length ? `选一个模型添加（${candidates.length}）` : "没有可选的，点“获取可用模型”或手填"),
+              ...candidates.map((m) => h("option", { value: m }, label(m))));
+            const addInput = h("input", { class: "input", placeholder: "或手填模型名，回车添加" });
+            addInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && addInput.value.trim()) setModels([...new Set([...c.models, addInput.value.trim()])]); });
             const fetchBtn = h("button", { class: "btn small", onclick: async () => {
               fetchBtn.disabled = true; fetchBtn.textContent = "获取中…";
               const lr = await api.video.chars.listModels(P.id).catch((e) => ({ ok: false, error: e.message }));
               fetchBtn.disabled = false; fetchBtn.textContent = "获取可用模型";
               if (lr && lr.ok) {
                 fetched[P.id] = lr.models;
-                window.Shell.toast(lr.fetched ? `拿到 ${lr.models.length} 个生图模型，勾上你要用的` : `这家不提供模型列表（${lr.error || "未知原因"}），已列出常用模型`, lr.fetched ? "success" : "info", 5000);
+                window.Shell.toast(lr.fetched ? `拿到 ${lr.models.length} 个生图模型，在下拉里选` : `这家不提供模型列表（${lr.error || "未知原因"}），下拉里是常用模型`, lr.fetched ? "success" : "info", 5000);
                 draw();
               } else window.Shell.toast((lr && lr.error) || "获取失败", "error");
             } }, "获取可用模型");
             const baseInput = h("input", { class: "input", placeholder: P.base ? `留空用默认 ${P.base}` : "必填，如 https://xxx.com/v1", value: c.baseUrl || "",
-              oninput: debounce(() => { c.baseUrl = baseInput.value.trim(); conf[P.id] = c; saveConf(conf); }, 400) });
+              oninput: debounce(() => { c.baseUrl = baseInput.value.trim(); c.added = true; conf[P.id] = c; saveConf(conf); }, 400) });
+            const removeBtn = h("button", { class: "btn small ghost danger", onclick: async () => {
+              if (!(await window.Shell.confirm(`移除 ${P.label}？会清除它的 Key 和模型。`))) return;
+              await api.video.chars.setKey("", P.id).catch(() => {});
+              conf[P.id] = { models: [], baseUrl: "", added: false }; await saveConf(conf); draw();
+            } }, "移除");
             return h("div", { class: "image-provider-card" },
-              h("div", { class: "set-title" }, P.label, P.hasKey ? h("span", { class: "muted small-text" }, `  已启用 ${c.models.length} 个模型`) : h("span", { class: "muted small-text" }, "  未保存 Key")),
-              keyRow(`${P.label.replace(/（.*?）/g, "")} API Key`, P.keyHint, () => api.video.chars.keyStatus(P.id), async (v) => { const x = await api.video.chars.setKey(v, P.id); setTimeout(draw, 50); return x; }),
-              row("要用的模型", "勾上的模型才会出现在生图时的“用哪些模型”里；“无参考图”的模型只按文字生成，人物可能不像", h("div", {}, chips, h("div", { class: "actions" }, addInput, fetchBtn)), { stack: true }),
-              row("接口地址", P.id === "custom" ? "中转/其他服务商必填" : "一般留空", baseInput, { stack: true }));
+              h("div", { class: "row" }, h("div", { class: "set-title grow" }, P.label, P.hasKey ? "" : h("span", { class: "muted small-text" }, "  未保存 Key")), removeBtn),
+              keyRow(`${P.label.replace(/（.*?）/g, "")} API Key`, P.keyHint, () => api.video.chars.keyStatus(P.id), async (v) => { const x = await api.video.chars.setKey(v, P.id); c.added = true; conf[P.id] = c; await saveConf(conf); setTimeout(draw, 50); return x; }),
+              row("模型", "加进来的模型才会出现在生图时的“用哪些模型”里", h("div", {}, chips, h("div", { class: "actions" }, pick, addInput, fetchBtn)), { stack: true }),
+              P.id === "custom" || c.baseUrl ? row("接口地址", P.id === "custom" ? "中转/其他服务商必填" : "一般留空", baseInput, { stack: true }) : null);
           });
+          const rest = info.filter((P) => !isAdded(P));
+          const addSel = h("select", { class: "input", onchange: async () => {
+            if (!addSel.value) return;
+            const c = conf[addSel.value] || { models: [], baseUrl: "" };
+            c.added = true; if (c.models === undefined) c.models = [];
+            conf[addSel.value] = c; await saveConf(conf); draw();
+          } }, h("option", { value: "" }, "＋ 添加服务商"), ...rest.map((P) => h("option", { value: P.id }, P.label)));
+          cards.push(rest.length ? h("div", { class: "actions" }, addSel) : null);
           dyn.replaceChildren(
             row("默认模型", "只勾一个模型生图时默认用它；每家的 Key 分开存，互不影响", defSel, { stack: true }),
-            ...cards);
+            ...cards.filter(Boolean));
         };
         draw();
       },
