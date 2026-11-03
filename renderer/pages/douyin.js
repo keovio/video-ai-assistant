@@ -399,7 +399,7 @@
             if (!v) { window.Shell.toast("没有背景音乐名称"); return; }
             try { await navigator.clipboard.writeText(v); window.Shell.toast("已复制音乐名", "success"); } catch (err) { window.Shell.toast("复制失败：" + err.message, "error"); }
           } }, "复制"))),
-      h("div", { class: "actions" }, importBtn, saveBtn),
+      h("div", { class: "actions sticky-actions" }, importBtn, saveBtn),
       h("details", { class: "fold", open: true },
         h("summary", {}, "脚本与分镜"),
         titleInput, h("div", { class: "gap-6" }), narrationInput,

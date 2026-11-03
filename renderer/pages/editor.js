@@ -138,6 +138,14 @@
     body.textContent = "";
     const p = draft.project;
     let selectedIdx = 0;
+    // 0.6.49：↑/↓ 切镜头（shortcuts.js 调用）
+    root._moveShot = (d) => {
+      if (!draft || !draft.shots.length) return;
+      selectedIdx = Math.max(0, Math.min(draft.shots.length - 1, selectedIdx + d));
+      redrawList(); renderDetail();
+      const sel = listBox.querySelector(".shot-row.selected");
+      if (sel) sel.scrollIntoView({ block: "nearest" });
+    };
     let savedSnap = ""; // 上次保存/加载时的草稿快照，用来判断有没有未保存改动
 
     const titleInput = h("input", { class: "input grow", value: p.title });

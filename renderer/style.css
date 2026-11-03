@@ -781,3 +781,14 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .project-toolbar .lib-search { flex: 1; min-width: 240px; }
 .search-hit { margin: 4px 0 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-hit mark, .project-card mark { background: rgba(255, 200, 0, .35); color: inherit; border-radius: 3px; padding: 0 1px; }
+/* 0.6.49 按钮固定：弹窗底栏、项目栏、分析结果操作、分镜编辑两栏 */
+.modal { max-height: calc(100vh - 40px); overflow: auto; }
+.modal > .actions:last-child { position: sticky; bottom: -20px; margin: 0 -20px -20px; padding: 12px 20px; background: var(--surface); border-top: 1px solid var(--line); z-index: 3; border-radius: 0 0 12px 12px; }
+.project-bar { position: sticky; top: 0; z-index: 20; }
+.editor-layout .split-left, .editor-layout .split-right { position: sticky; top: 72px; }
+.editor-layout .split-right { max-height: calc(100vh - 100px); overflow: auto; }
+.workbench-side .sticky-actions { position: sticky; top: -1px; z-index: 4; background: var(--surface); padding: 8px 0; margin: 0; box-shadow: 0 6px 10px -8px rgba(15, 23, 42, .25); }
+.kbd-list { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; font-size: 13px; }
+.kbd-list dd { margin: 0; color: var(--muted); }
+kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg-2, rgba(127,127,127,.08)); white-space: nowrap; }
+@media (max-width: 1100px) { .editor-layout .split-left, .editor-layout .split-right { position: static; max-height: none; } }

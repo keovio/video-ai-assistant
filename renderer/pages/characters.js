@@ -116,8 +116,11 @@
         h("div", { class: "row" }, desc, photoBtn, aiBtn, photo),
         h("label", {}, h("span", { class: "small-text" }, "外貌锚点（每次生图都会带上，保证是同一个人）"), anchor),
         h("label", {}, h("span", { class: "small-text" }, "服装"), outfit),
-        h("div", { class: "actions" }, saveBtn, delBtn)),
+        ),
       genBox, imgs);
+    // 0.6.49：保存/删除放到固定的底部按钮栏
+    const foot = m.overlay.querySelector(".modal > .actions.end");
+    if (foot) foot.prepend(delBtn, h("span", { class: "spacer" }), saveBtn);
 
     async function drawImages() {
       genBox.textContent = ""; imgs.textContent = "";
