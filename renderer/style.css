@@ -776,3 +776,8 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .workbench.side-left .workbench-side { padding-right: 0; padding-left: 2px; }
 @media (max-width: 1100px) { .workbench.side-left, .workbench.side-left.embed-min { grid-template-columns: 1fr; } }
 .workbench.side-left .browser-min-strip > span:first-child { display: inline-block; transform: scaleX(-1); }
+/* 0.6.48 项目搜索 */
+.project-toolbar { display: flex; gap: 8px; align-items: center; margin: 4px 0 2px; flex-wrap: wrap; }
+.project-toolbar .lib-search { flex: 1; min-width: 240px; }
+.search-hit { margin: 4px 0 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-hit mark, .project-card mark { background: rgba(255, 200, 0, .35); color: inherit; border-radius: 3px; padding: 0 1px; }

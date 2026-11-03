@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("app", {
     projects: {
       list: () => ipcRenderer.invoke("video:projects.list"),
       get: (id) => ipcRenderer.invoke("video:projects.get", id),
+      texts: () => ipcRenderer.invoke("video:projects.texts"),
       create: (input) => ipcRenderer.invoke("video:projects.create", input),
       update: (id, patch) => ipcRenderer.invoke("video:projects.update", id, patch),
       remove: (id) => ipcRenderer.invoke("video:projects.remove", id),
