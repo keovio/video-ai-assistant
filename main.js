@@ -73,6 +73,8 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   // AI 文本分析（M4：抖音分析用 OpenAI 兼容 chat completions；Key 走 secrets 存储，不进 settings.json）
   aiBaseUrl: { type: "string", maxLength: 500, default: "" },
   aiModel: { type: "string", maxLength: 128, default: "gpt-4o-mini" },
+  imageBaseUrl: { type: "string", maxLength: 500, default: "" }, // 0.6.44：人物生图（火山方舟 Seedream），留空用北京区默认
+  imageModel: { type: "string", maxLength: 128, default: "doubao-seedream-4-0-250828" },
 } });
 const logger = createLogger({ dir: path.join(DATA_DIR, "logs"), level: settings.get("logLevel"), echo: !app.isPackaged || SMOKE });
 const tasks = createTaskManager({ concurrency: 2, logger });
@@ -1041,6 +1043,10 @@ setupVideoIpc({
   tasks,
   logger,
   secrets: ttsSecrets,
+  getImageSettings: () => ({ imageBaseUrl: settings.get("imageBaseUrl"), imageModel: settings.get("imageModel") }),
+  getImageKey: () => ttsSecrets.get("imageApiKey"),
+  imageFetchImpl: makeFetch(Math.max(AI_TIMEOUT_MS, 180000)),
+  copyImage: (p) => { const { clipboard, nativeImage } = require("electron"); clipboard.writeImage(nativeImage.createFromPath(p)); },
 });
 
 // ---------------- CI 冒烟测试 ----------------

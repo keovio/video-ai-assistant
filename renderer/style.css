@@ -736,3 +736,22 @@ details.fold[open] > summary { margin-bottom: 8px; }
 .lib-source .lib-thumb { aspect-ratio: 4 / 5; }
 .lib-source .lib-thumb img { object-fit: cover; }
 .lib-source .lib-thumb:hover .lib-play { opacity: 1; }
+/* 0.6.44 角色库 */
+.lib-grid-chars { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.lib-char { cursor: pointer; }
+.lib-char .lib-thumb { aspect-ratio: 1 / 1; }
+.lib-char .lib-thumb img { object-fit: cover; }
+.modal-char { width: min(920px, 94vw); max-height: 90vh; overflow: auto; }
+.char-form { display: grid; gap: 10px; }
+.char-form label { display: grid; gap: 4px; }
+.char-form .row { display: flex; gap: 8px; align-items: center; }
+.char-gen, .char-images { margin-top: 14px; }
+.char-gen-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.char-gen-row b { min-width: 72px; }
+.char-img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 8px; }
+.char-img { border: 1px solid var(--border, #333); border-radius: 8px; overflow: hidden; background: var(--bg-2, rgba(0,0,0,.2)); }
+.char-img.cover { outline: 2px solid var(--accent, #6aa0ff); }
+.char-img img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; display: block; cursor: zoom-in; background: #111; }
+.char-img-foot { display: flex; gap: 4px; align-items: center; padding: 4px; }
+.char-img-foot select { flex: 1; min-width: 0; }
+.char-img .one-line { padding: 0 6px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

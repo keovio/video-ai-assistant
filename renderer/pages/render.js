@@ -192,7 +192,18 @@
     if (skillId && !skillList.some((a) => a.id === skillId)) { skillId = ""; SS.set(currentId, ""); }
     const curSkill = () => skillList.find((a) => a.id === skillId) || null;
     const styleText = () => (SS && curSkill() ? SS.suffix(curSkill()) : "");
-    const promptOf = (s) => { const p = basePrompt(s); const st = styleText(); return p && st && !/风格[:：]/.test(p) ? `${p}\n风格：${st}` : p; };
+    // 0.6.44：项目绑定角色时，复制的提示词前面带上人物外貌锚点
+    const CH = window.Characters;
+    const charList = CH ? await CH.list(true) : [];
+    let charId = CH ? CH.projectChar.get(currentId) : "";
+    if (charId && !charList.some((c) => c.id === charId)) charId = "";
+    const curChar = () => charList.find((c) => c.id === charId) || null;
+    const charText = () => (CH && curChar() ? CH.whoText(curChar()) : "");
+    const promptOf = (s) => {
+      let p = basePrompt(s); const st = styleText(); const who = charText();
+      if (p && who) p = `人物（${curChar().name}，全片同一人）：${who}\n${p}`;
+      return p && st && !/风格[:：]/.test(p) ? `${p}\n风格：${st}` : p;
+    };
     const copyText = async (text, okMsg) => {
       if (!text) { window.Shell.toast("没有可复制的画面提示词，先去分镜编辑里写画面描述", "error"); return; }
       try { await navigator.clipboard.writeText(text); window.Shell.toast(okMsg, "success"); }
@@ -218,6 +229,8 @@
         } });
       const importBtn = h("button", { class: "btn small", onclick: () => importInput.click() }, "导入");
       const copyBtn = h("button", { class: "btn small", title: promptOf(s) || "这镜还没有画面提示词", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制${styleText() ? "（带风格）" : ""}`) }, "复制画面");
+      const frameBtn = CH ? h("button", { class: "btn small", title: "用角色生成这镜的首帧图（图生视频用，保持同一个人）", onclick: () => CH.openFrame({
+        projectId: currentId, label: `第 ${i + 1} 镜`, shotPrompt: basePrompt(s), style: styleText(), aspect: (data.project && data.project.aspect) || "" }) }, "首帧图") : "";
       const clearBtn = s.videoAssetId ? h("button", { class: "btn small ghost", onclick: async () => {
         const r = await api.video.shots.clearVideo(s.id);
         if (r.ok) await load(root);
@@ -230,7 +243,7 @@
           audioChip, videoChip),
         h("div", { class: "clip-row-foot" },
           h("span", { class: "muted small-text grow" }, `${fmt(s.start)} – ${fmt(s.end)}`),
-          copyBtn, importBtn, clearBtn, importInput),
+          copyBtn, frameBtn, importBtn, clearBtn, importInput),
         promptOf(s)
           ? h("div", { class: "shot-prompt", title: styleText() ? "点一下复制（会带上风格）" : "点一下复制", onclick: () => copyText(promptOf(s), `第 ${i + 1} 镜画面提示词已复制${styleText() ? "（带风格）" : ""}`) }, basePrompt(s))
           : h("div", { class: "shot-prompt empty" }, "还没有画面提示词，去分镜编辑里写画面描述")));
@@ -249,6 +262,15 @@
           sel.value = skillId;
           return sel;
         })()) : h("p", { class: "muted small-text" }, "在“视频分析”里保存风格 skill 后，可在这里选一个，复制画面时自动带上风格。"),
+      CH ? h("label", { class: "row style-skill-row" }, h("span", { class: "small-text" }, "角色"),
+        (() => {
+          const sel = h("select", { class: "input small grow", title: "复制画面提示词时自动带上人物外貌，首帧图默认用这个角色", onchange: (e) => {
+            if (e.target.value === "__new") { e.target.value = charId; CH.openEditor(null, () => load(root).catch(() => {})); return; }
+            CH.projectChar.set(currentId, e.target.value); load(root).catch(() => {}); } },
+            h("option", { value: "" }, "不固定人物"), ...charList.map((c) => h("option", { value: c.id }, c.name)), h("option", { value: "__new" }, "＋ 新建角色…"));
+          sel.value = charId;
+          return sel;
+        })()) : "",
       h("p", { class: "muted small-text" }, "复制每镜的画面提示词，到左边任意生成网站（即梦、可灵、海螺、Vidu…）自己生成并下载，视频会出现在“浏览器下载”里，挂到对应镜头；也可以“导入”本机文件。"),
       shots.length ? clipList : h("p", { class: "muted small-text" }, "这个项目还没有镜头。"));
 

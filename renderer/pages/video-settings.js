@@ -157,6 +157,18 @@
       },
     });
 
+    // ---------------- 0.6.44 人物生图 ----------------
+    window.Shell.registerSettingsSection({
+      id: "video-image", title: "人物生图", icon: "image", order: 3.5,
+      render(box) {
+        box.append(
+          h("p", { class: "muted small-text" }, "作品库 → 角色 里生成三视图和镜头首帧图用。不填也能用：复制提示词和参考图，到即梦网页里自己生成，再导入。"),
+          row("接口地址", "火山方舟图片生成接口；留空表示 https://ark.cn-beijing.volces.com/api/v3", textInput("imageBaseUrl", "https://ark.cn-beijing.volces.com/api/v3"), { stack: true }),
+          row("模型", "Seedream 模型 ID，如 doubao-seedream-4-0-250828、doubao-seedream-4-5-251128；需先在火山方舟开通", textInput("imageModel", "doubao-seedream-4-0-250828"), { stack: true }),
+          keyRow("火山方舟 API Key", "在火山方舟控制台 → API Key 管理 里创建", () => api.video.chars.keyStatus(), (v) => api.video.chars.setKey(v)));
+      },
+    });
+
     // ---------------- 系统依赖 ----------------
     window.Shell.registerSettingsSection({
       id: "video-system", title: "ffmpeg 与数据", icon: "terminal", order: 4,
