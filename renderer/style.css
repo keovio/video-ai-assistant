@@ -802,3 +802,18 @@ kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border: 1px solid
 .refine-flash { animation: refineFlash 1.8s ease-out; }
 .char-edit-preview { max-width: 100%; max-height: 260px; object-fit: contain; border-radius: 8px; align-self: center; background: rgba(127,127,127,.08); }
 .char-edit-field { display: flex; flex-direction: column; gap: 4px; } .char-edit-field textarea { width: 100%; }
+/* 0.6.52 图片放大预览 */
+.iv-overlay { background: rgba(0,0,0,.82); display: flex; flex-direction: column; align-items: stretch; justify-content: center; padding: 0; z-index: 2000; }
+.iv-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 24px 16px 8px; }
+.iv-img { max-width: calc(100% - 120px); max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.5); background: #111; }
+.iv-nav { width: 44px; height: 64px; border: 0; border-radius: 10px; background: rgba(255,255,255,.12); color: #fff; font-size: 34px; cursor: pointer; flex: none; }
+.iv-nav:hover { background: rgba(255,255,255,.25); }
+.iv-bar { display: flex; align-items: center; gap: 12px; padding: 10px 20px 18px; color: #eee; }
+.iv-cap { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iv-acts { display: flex; gap: 6px; }
+.char-edit-preview, .char-img img { cursor: zoom-in; }
+.model-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 4px 0 8px; }
+.model-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px; border: 1px solid var(--border, #ccc); border-radius: 999px; cursor: pointer; }
+.ref-strip { display: flex; gap: 6px; flex-wrap: wrap; }
+.ref-strip:empty { display: none; }
+.ref-strip img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; cursor: zoom-in; border: 1px solid var(--border, #ccc); }

@@ -128,8 +128,8 @@
 
     // 0.6.51：改图。先让 AI 把修改同步进外貌锚点/服装（保存），再以这张图为第一参考图重新生成
     async function editImage(im) {
-      const keyR = await C().keyStatus().catch(() => null);
-      const hasKey = !!(keyR && keyR.set);
+      const picker = await modelPicker();
+      const hasKey = picker.any();
       const ins = h("textarea", { class: "input", rows: 3, placeholder: "要怎么改，如：头发改成齐肩短发；衣服换成白色衬衫；表情更开心" });
       const sync = h("input", { type: "checkbox", checked: true });
       const status = h("p", { class: "muted small-text" });
@@ -156,10 +156,10 @@
         goBtn.disabled = true;
         if (!await syncText(instruction)) { goBtn.disabled = false; return; }
         status.textContent = "生成中…（约 20–60 秒）";
-        const r = await call(C().generate(cur.id, { kind: im.kind, baseFile: im.file, instruction, note: "修改：" + instruction.slice(0, 40) }), "改好了，新图在最前面");
+        const rs = await genMulti(cur.id, { kind: im.kind, baseFile: im.file, instruction, note: "修改：" + instruction.slice(0, 40) }, picker);
         goBtn.disabled = false;
-        if (!r) { status.textContent = ""; return; }
-        if (r.refsIgnored) toast("当前模型不支持参考图，这张只按文字生成；要在原图上改，换火山方舟 Seedream 4.x 或 gpt-image-1", "error");
+        if (!rs.length) { status.textContent = ""; return; }
+        if (rs.some((r) => r.refsIgnored)) toast("有模型不支持参考图，那张只按文字生成，不是在原图上改", "error", 6000);
         em.close(); await drawImages(); if (onDone) onDone();
       };
       webBtn.onclick = async () => {
@@ -172,10 +172,10 @@
         status.textContent = sync.checked ? "外貌/服装已同步，提示词已复制。" : "提示词已复制。";
       };
       const em = modal("改图",
-        h("img", { class: "char-edit-preview", src: im.url || "", alt: "" }),
+        h("img", { class: "char-edit-preview", src: im.url || "", alt: "", title: "点击放大", onclick: () => window.ImageViewer.open([{ url: im.url, caption: KIND[im.kind] || "" }]) }),
         h("label", { class: "char-edit-field" }, h("span", { class: "small-text" }, "要怎么改"), ins),
         h("label", { class: "row" }, sync, h("span", { class: "small-text" }, "同时更新外貌锚点/服装（长期特征改了就勾上，后面生图都会跟着变）")),
-        status);
+        picker.el, status);
       const foot = em.overlay.querySelector(".modal > .actions.end");
       if (foot) foot.prepend(webBtn, imgBtn, h("span", { class: "spacer" }), goBtn);
       ins.focus();
@@ -186,15 +186,14 @@
       if (!cur) { genBox.append(h("p", { class: "muted small-text" }, "保存后可以生成三视图、面部特写，或导入已有图片。")); return; }
       const fresh = ((await C().get(cur.id).catch(() => null)) || {}).character;
       if (fresh) cur = fresh;
-      const keyR = await C().keyStatus().catch(() => null);
-      const hasKey = !!(keyR && keyR.set);
+      const picker = await modelPicker();
+      const hasKey = picker.any();
       const genRow = (kind, label) => {
-        const btn = h("button", { class: "btn small primary", disabled: !hasKey, title: hasKey ? "用设置 → 人物生图 里选的服务商和模型生成" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
+        const btn = h("button", { class: "btn small primary", disabled: !hasKey, title: hasKey ? "用上面勾选的模型生成（勾几个就同时出几张对比）" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
           btn.disabled = true; btn.textContent = "生成中…（约 20–60 秒）";
-          const r = await call(C().generate(cur.id, { kind }), `${label}已生成`);
+          const rs = await genMulti(cur.id, { kind }, picker);
           btn.disabled = false; btn.textContent = "API 生成";
-          if (r && r.refsIgnored) toast("当前模型不支持参考图，这张只按文字生成；要更像同一个人，换火山方舟 Seedream 4.x 或 gpt-image-1", "error");
-          if (r) await drawImages();
+          if (rs.length) await drawImages();
         } }, "API 生成");
         return h("div", { class: "char-gen-row" }, h("b", {}, label),
           h("button", { class: "btn small", onclick: async () => { const r = await call(C().prompt(cur.id, { kind })); if (r) copy(r.prompt, "提示词已复制"); } }, "复制提示词"),
@@ -208,7 +207,7 @@
         for (const f of [...(up.files || [])]) await call(C().addImage(cur.id, { dataUrl: await readFile(f) }, upKind.value));
         up.value = ""; await drawImages(); if (onDone) onDone();
       };
-      genBox.append(h("h3", {}, "生成形象图"),
+      genBox.append(h("h3", {}, "生成形象图"), picker.el,
         genRow("sheet", "三视图"), genRow("face", "面部特写"),
         h("div", { class: "char-gen-row" }, h("b", {}, "导入图片"), upKind, h("button", { class: "btn small", onclick: () => up.click() }, "选择图片…"), up),
         h("p", { class: "muted small-text" }, "网页生成：会复制提示词和参考图并打开即梦，生成后下载，再用“导入图片”放回来（选对类型）。三视图 + 面部特写都有时，首帧图最稳。"));
@@ -219,7 +218,7 @@
           ...Object.entries(KIND).map(([v, l]) => h("option", { value: v }, l)));
         kindSel.value = im.kind;
         grid.append(h("div", { class: "char-img" + (cur.cover === im.file ? " cover" : "") },
-          h("img", { src: im.url || "", alt: "", title: im.note || "", onclick: () => C().reveal(cur.id, im.file) }),
+          h("img", { src: im.url || "", alt: "", title: (im.note ? im.note + " · " : "") + "点击放大", onclick: () => viewImages(cur, cur.images, cur.images.indexOf(im)) }),
           h("div", { class: "char-img-foot" }, kindSel,
             h("button", { class: "btn small ghost", title: "设为封面", onclick: async () => { if (await call(C().update(cur.id, { cover: im.file }))) { await drawImages(); if (onDone) onDone(); } } }, "★"),
             h("button", { class: "btn small ghost", title: "改图：在这张图基础上修改，外貌/服装描述同步", onclick: () => editImage(im) }, "✎"),
@@ -230,6 +229,59 @@
       imgs.append(cur.images.length ? grid : h("p", { class: "muted small-text" }, "还没有图片。"));
     }
     await drawImages();
+  }
+
+  // 0.6.52：同时用几个模型生图。勾选记在 localStorage；默认是设置里的服务商+模型
+  const PICK_KEY = "charGenModels";
+  async function modelPicker() {
+    const r = await C().providers().catch(() => null);
+    const opts = [];
+    if (r && r.ok) for (const p of r.providers) if (p.hasKey) for (const m of p.modelInfo) opts.push({ provider: p.id, model: m.id, label: m.label.replace(/（(支持参考图|只文生图)）/g, ""), refs: m.refs, group: p.label.replace(/（.*?）/g, "") });
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(PICK_KEY) || "[]"); } catch { saved = []; }
+    const keyOf = (o) => o.provider + "|" + o.model;
+    let chosen = new Set(saved.filter((k) => opts.some((o) => keyOf(o) === k)));
+    if (!chosen.size && r && r.ok && opts.some((o) => o.provider === r.current && o.model === r.model)) chosen.add(r.current + "|" + r.model);
+    if (!chosen.size && opts[0]) chosen.add(keyOf(opts[0]));
+    const box = h("div", { class: "model-pick" });
+    const draw = () => {
+      box.replaceChildren(h("span", { class: "small-text muted" }, "用哪些模型："),
+        ...(opts.length ? opts.map((o) => {
+          const cb = h("input", { type: "checkbox", checked: chosen.has(keyOf(o)), onchange: () => {
+            if (cb.checked) { if (chosen.size >= 4) { cb.checked = false; return toast("最多同时 4 个模型"); } chosen.add(keyOf(o)); } else chosen.delete(keyOf(o));
+            localStorage.setItem(PICK_KEY, JSON.stringify([...chosen]));
+          } });
+          return h("label", { class: "model-chip", title: `${o.group} · ${o.model}${o.refs ? "" : "（不支持参考图，只按文字生成，人物可能不像）"}` }, cb, o.label, o.refs ? "" : h("span", { class: "muted" }, " · 无参考图"));
+        }) : [h("span", { class: "small-text muted" }, "还没有可用的生图 Key，去 设置 → 人物生图 保存")]));
+    };
+    draw();
+    return { el: box, picks: () => opts.filter((o) => chosen.has(keyOf(o))), any: () => opts.length > 0 };
+  }
+  // 按勾选的模型并行生成；返回所有成功的结果，失败的逐个提示
+  async function genMulti(id, opts, picker) {
+    const picks = picker.picks();
+    if (!picks.length) { toast("先勾一个模型"); return []; }
+    const many = picks.length > 1;
+    const rs = await Promise.all(picks.map((p) => C().generate(id, { ...opts, provider: p.provider, model: p.model, tagModel: many || undefined })
+      .then((r) => ({ p, r })).catch((e) => ({ p, r: { ok: false, error: e.message } }))));
+    const okOnes = [];
+    for (const { p, r } of rs) {
+      if (r && r.ok) okOnes.push(r);
+      else toast(`${p.label} 生成失败：${(r && r.error) || "未知错误"}`, "error", 6000);
+    }
+    if (okOnes.length) toast(many ? `${okOnes.length}/${picks.length} 个模型生成好了` : "已生成", "success");
+    return okOnes;
+  }
+
+  // 0.6.52：点图放大，左右翻同一角色的所有图
+  function viewImages(c, images, index) {
+    window.ImageViewer.open(images.map((im) => ({
+      url: im.url, caption: `${c.name} · ${KIND[im.kind] || im.kind}${im.note ? " · " + im.note : ""}`,
+      actions: [
+        { label: "复制图片", onClick: () => call(C().copyImage(c.id, im.file), "图片已复制") },
+        { label: "在文件夹中显示", onClick: () => C().reveal(c.id, im.file) },
+      ],
+    })), index);
   }
 
   // ---------- 镜头首帧图弹窗（合成导出每镜） ----------
@@ -249,25 +301,33 @@
     const fill = async () => {
       projectChar.set(opts.projectId, sel.value);
       const r = await call(C().prompt(sel.value, { kind: "frame", shotPrompt: opts.shotPrompt, aspect: opts.aspect, style: opts.style }));
-      if (r) { ta.value = r.prompt; status.textContent = r.refs ? `会带 ${r.refs} 张参考图（三视图/面部特写优先）` : "这个角色还没有参考图，只能靠文字，容易不像；建议先生成三视图"; }
+      if (r) {
+        ta.value = r.prompt; status.textContent = r.refs ? `会带这 ${r.refs} 张参考图（面部特写/三视图优先，点图放大）：` : "这个角色还没有参考图，只能靠文字，容易不像；建议先生成三视图";
+        // 0.6.52：把参考图本身列出来，点开能放大看
+        const id = sel.value;
+        const items = [];
+        for (const f of r.refFiles || []) { const im = await C().image(id, f).catch(() => null); if (im && im.ok) items.push({ url: im.url, caption: "参考图 · " + f }); }
+        refStrip.replaceChildren(...items.map((it, k) => h("img", { src: it.url, alt: "", title: "点击放大", onclick: () => window.ImageViewer.open(items, k) })));
+      }
     };
     sel.onchange = fill;
-    const keyR = await C().keyStatus().catch(() => null);
-    const hasKey = !!(keyR && keyR.set);
+    const picker = await modelPicker();
+    const hasKey = picker.any();
+    const refStrip = h("div", { class: "ref-strip" });
     const showFile = async (file) => {
       const r = await C().image(sel.value, file).catch(() => null);
       results.append(h("div", { class: "char-img" },
-        h("img", { src: r && r.ok ? r.url : "", alt: "", onclick: () => C().reveal(sel.value, file) }),
+        h("img", { src: r && r.ok ? r.url : "", alt: "", title: "点击放大", onclick: () => window.ImageViewer.open([{ url: r && r.ok ? r.url : "", caption: `${opts.label || ""} 首帧图`,
+          actions: [{ label: "复制图片", onClick: () => call(C().copyImage(sel.value, file), "首帧图已复制") }, { label: "在文件夹中显示", onClick: () => C().reveal(sel.value, file) }] }]) }),
         h("div", { class: "char-img-foot" },
           h("button", { class: "btn small", onclick: () => call(C().copyImage(sel.value, file), "首帧图已复制，去生成网站粘贴做图生视频") }, "复制图片"),
           h("button", { class: "btn small ghost", onclick: () => C().reveal(sel.value, file) }, "文件夹"))));
     };
-    const genBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "用设置 → 人物生图 里选的服务商和模型生成" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
+    const genBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "用勾选的模型生成（勾几个就同时出几张对比）" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
       genBtn.disabled = true; genBtn.textContent = "生成中…（约 20–60 秒）";
-      const r = await call(C().generate(sel.value, { kind: "frame", prompt: ta.value, aspect: opts.aspect, note: opts.label || "" }), "首帧图已生成");
+      const rs = await genMulti(sel.value, { kind: "frame", prompt: ta.value, aspect: opts.aspect, note: opts.label || "" }, picker);
       genBtn.disabled = false; genBtn.textContent = "API 生成";
-      if (r && r.refsIgnored) toast("当前模型不支持参考图，这张只按文字生成；要更像同一个人，换火山方舟 Seedream 4.x 或 gpt-image-1", "error");
-      if (r) for (const f of r.files) await showFile(f);
+      for (const r of rs) for (const f of r.files) await showFile(f);
     } }, "API 生成");
     const up = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true, onchange: async () => {
       const f = up.files && up.files[0]; if (!f) return;
@@ -276,7 +336,7 @@
     } });
     modal(`${opts.label || "镜头"} · 首帧图`,
       h("label", {}, h("span", { class: "small-text" }, "角色"), sel),
-      h("label", {}, h("span", { class: "small-text" }, "提示词（可改）"), ta), status,
+      h("label", {}, h("span", { class: "small-text" }, "提示词（可改）"), ta), status, refStrip, picker.el,
       window.AiRefine.box({ stackKey: ta, context: "镜头首帧图的生图提示词（人物外貌要和角色设定一致）",
         fields: () => [window.AiRefine.field("prompt", "首帧图提示词", ta)], flash: () => ta }),
       h("div", { class: "actions" },
