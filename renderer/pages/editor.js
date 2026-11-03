@@ -244,6 +244,14 @@
         } }, "清除配音");
 
       const label = (text, extra) => h("div", { class: "field-label" }, h("span", {}, text), extra ? h("span", { class: "muted small-text" }, extra) : "");
+      // 0.6.51：AI 调整这一镜：口播 / 画面描述 / 画面提示词联动改
+      const F = window.AiRefine.field;
+      const refine = window.AiRefine.box({
+        stackKey: s, context: `口播视频第 ${i + 1} 镜（画幅 ${aspectSelect.value}）`,
+        fields: () => [F("narration", "口播", narration), F("visual", "画面描述", visual), F("imagePrompt", "画面提示词", imagePrompt)],
+        flash: (k) => ({ narration, visual, imagePrompt })[k],
+        onApplied: () => { updateTotals(); redrawListLight(); refreshDirty(); },
+      });
       detailBox.append(
         h("section", { class: "card module shot-detail" },
           h("header", { class: "card-head" },
@@ -253,6 +261,7 @@
             h("button", { class: "btn small ghost", title: "上移", disabled: i === 0, onclick: () => move(i, -1) }, "↑ 上移"),
             h("button", { class: "btn small ghost", title: "下移", disabled: i === draft.shots.length - 1, onclick: () => move(i, 1) }, "↓ 下移"),
             h("button", { class: "btn small danger-ghost", onclick: () => removeShot(i) }, "删除")),
+          refine,
           label("口播", "约 " + fmt(t.seconds) + "，可留空做纯画面镜头"),
           narration,
           label("时长（秒）", "没有配音时用"),
@@ -516,9 +525,15 @@
         out = r.prompts;
         status.textContent = `改写完成（${((Date.now() - t0) / 1000).toFixed(0)} 秒），可以逐条修改，确认后替换`;
         // 0.6.37：优化前 / 优化后并排，下面一栏标出改动（绿色=新增，红色划线=删掉），改右边时实时更新
-        result.replaceChildren(...idxs.map((k, j) => {
+        const tas = [];
+        const refineBox = window.AiRefine.box({
+          stackKey: out, context: "AI 改写后的每镜画面提示词（各镜口播/画面描述见标签）",
+          fields: () => idxs.map((k, j) => window.AiRefine.field(`p${j}`, `第 ${k + 1} 镜提示词（口播：${String(draft.shots[k].narration || "无").slice(0, 60)}）`, tas[j])),
+          flash: (key) => tas[Number(key.slice(1))],
+        });
+        result.replaceChildren(refineBox, ...idxs.map((k, j) => {
           const old = draft.shots[k].imagePrompt || draft.shots[k].visual || "";
-          const ta = h("textarea", { class: "input", rows: 5 }); ta.value = out[j] || "";
+          const ta = h("textarea", { class: "input", rows: 5 }); ta.value = out[j] || ""; tas[j] = ta;
           const diffBox = h("div", { class: "rewrite-diff" });
           const stat = h("span", { class: "muted small-text" });
           const paint = () => {

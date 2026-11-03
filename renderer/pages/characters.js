@@ -116,12 +116,70 @@
         h("div", { class: "row" }, desc, photoBtn, aiBtn, photo),
         h("label", {}, h("span", { class: "small-text" }, "外貌锚点（每次生图都会带上，保证是同一个人）"), anchor),
         h("label", {}, h("span", { class: "small-text" }, "服装"), outfit),
+        window.AiRefine.box({ stackKey: cur || anchor, context: "AI 生图用的固定角色设定（外貌锚点只写不随镜头变的特征）",
+          placeholder: "告诉 AI 怎么改，如：改成短发、年龄小一点、换成白衬衫（外貌和服装会一起对上）",
+          fields: () => [window.AiRefine.field("anchor", "外貌锚点", anchor), window.AiRefine.field("outfit", "服装", outfit)],
+          flash: (k) => ({ anchor, outfit })[k] }),
         ),
       genBox, imgs);
     // 0.6.49：保存/删除放到固定的底部按钮栏
     const foot = m.overlay.querySelector(".modal > .actions.end");
     if (foot) foot.prepend(delBtn, h("span", { class: "spacer" }), saveBtn);
 
+    // 0.6.51：改图。先让 AI 把修改同步进外貌锚点/服装（保存），再以这张图为第一参考图重新生成
+    async function editImage(im) {
+      const keyR = await C().keyStatus().catch(() => null);
+      const hasKey = !!(keyR && keyR.set);
+      const ins = h("textarea", { class: "input", rows: 3, placeholder: "要怎么改，如：头发改成齐肩短发；衣服换成白色衬衫；表情更开心" });
+      const sync = h("input", { type: "checkbox", checked: true });
+      const status = h("p", { class: "muted small-text" });
+      const goBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "" : "设置 → 人物生图 里保存 API Key 后可用" }, "改图");
+      const webBtn = h("button", { class: "btn", title: "网页手动改：复制带修改要求的提示词，去即梦粘贴" }, "复制提示词");
+      const imgBtn = h("button", { class: "btn", title: "复制这张图，去即梦当参考图粘贴", onclick: () => call(C().copyImage(cur.id, im.file), "这张图已复制") }, "复制这张图");
+      const syncText = async (instruction) => {
+        if (!sync.checked) return true;
+        status.textContent = "同步外貌/服装描述…";
+        const r = await window.app.video.ai.refine({ instruction: "角色形象修改：" + instruction, context: "AI 生图用的固定角色设定（只改和这次修改有关的部分，表情动作这类临时变化不写进外貌锚点）",
+          fields: [{ key: "anchor", label: "外貌锚点", text: anchor.value }, { key: "outfit", label: "服装", text: outfit.value }] }).catch((e) => ({ ok: false, error: e.message }));
+        if (!r || !r.ok) { status.textContent = "同步描述失败：" + ((r && r.error) || "未知错误"); return false; }
+        if (r.changed.length) {
+          anchor.value = r.fields.anchor; outfit.value = r.fields.outfit;
+          const s = await call(C().save({ id: cur.id, name: name.value.trim(), anchor: anchor.value.trim(), outfit: outfit.value.trim() }));
+          if (!s) return false;
+          cur = s.character;
+        }
+        return true;
+      };
+      goBtn.onclick = async () => {
+        const instruction = ins.value.trim();
+        if (!instruction) return toast("先写要怎么改");
+        goBtn.disabled = true;
+        if (!await syncText(instruction)) { goBtn.disabled = false; return; }
+        status.textContent = "生成中…（约 20–60 秒）";
+        const r = await call(C().generate(cur.id, { kind: im.kind, baseFile: im.file, instruction, note: "修改：" + instruction.slice(0, 40) }), "改好了，新图在最前面");
+        goBtn.disabled = false;
+        if (!r) { status.textContent = ""; return; }
+        if (r.refsIgnored) toast("当前模型不支持参考图，这张只按文字生成；要在原图上改，换火山方舟 Seedream 4.x 或 gpt-image-1", "error");
+        em.close(); await drawImages(); if (onDone) onDone();
+      };
+      webBtn.onclick = async () => {
+        const instruction = ins.value.trim();
+        if (!instruction) return toast("先写要怎么改");
+        if (!await syncText(instruction)) return;
+        const p = await call(C().prompt(cur.id, { kind: im.kind === "other" ? "frame" : im.kind }));
+        if (!p) return;
+        await copy(`${p.prompt}\n以参考图为基础修改：${instruction}。除此之外的人物长相、构图、光线、背景都保持和参考图一致。`, "提示词已复制，去即梦粘贴；再点“复制这张图”粘参考图");
+        status.textContent = sync.checked ? "外貌/服装已同步，提示词已复制。" : "提示词已复制。";
+      };
+      const em = modal("改图",
+        h("img", { class: "char-edit-preview", src: im.url || "", alt: "" }),
+        h("label", { class: "char-edit-field" }, h("span", { class: "small-text" }, "要怎么改"), ins),
+        h("label", { class: "row" }, sync, h("span", { class: "small-text" }, "同时更新外貌锚点/服装（长期特征改了就勾上，后面生图都会跟着变）")),
+        status);
+      const foot = em.overlay.querySelector(".modal > .actions.end");
+      if (foot) foot.prepend(webBtn, imgBtn, h("span", { class: "spacer" }), goBtn);
+      ins.focus();
+    }
     async function drawImages() {
       genBox.textContent = ""; imgs.textContent = "";
       delBtn.hidden = !cur;
@@ -164,6 +222,7 @@
           h("img", { src: im.url || "", alt: "", title: im.note || "", onclick: () => C().reveal(cur.id, im.file) }),
           h("div", { class: "char-img-foot" }, kindSel,
             h("button", { class: "btn small ghost", title: "设为封面", onclick: async () => { if (await call(C().update(cur.id, { cover: im.file }))) { await drawImages(); if (onDone) onDone(); } } }, "★"),
+            h("button", { class: "btn small ghost", title: "改图：在这张图基础上修改，外貌/服装描述同步", onclick: () => editImage(im) }, "✎"),
             h("button", { class: "btn small ghost", title: "复制图片", onclick: () => call(C().copyImage(cur.id, im.file), "图片已复制") }, "⧉"),
             h("button", { class: "btn small ghost", title: "删除", onclick: async () => { if (await call(C().removeImage(cur.id, im.file))) { await drawImages(); if (onDone) onDone(); } } }, "✕")),
           im.note ? h("div", { class: "muted small-text one-line" }, im.note) : null));
@@ -218,6 +277,8 @@
     modal(`${opts.label || "镜头"} · 首帧图`,
       h("label", {}, h("span", { class: "small-text" }, "角色"), sel),
       h("label", {}, h("span", { class: "small-text" }, "提示词（可改）"), ta), status,
+      window.AiRefine.box({ stackKey: ta, context: "镜头首帧图的生图提示词（人物外貌要和角色设定一致）",
+        fields: () => [window.AiRefine.field("prompt", "首帧图提示词", ta)], flash: () => ta }),
       h("div", { class: "actions" },
         h("button", { class: "btn", onclick: () => copy(ta.value, "提示词已复制") }, "复制提示词"),
         h("button", { class: "btn", onclick: () => webFlow(sel.value, ta.value) }, "去即梦网页生成"),

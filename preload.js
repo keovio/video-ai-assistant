@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld("app", {
       models: (kind) => ipcRenderer.invoke("video:ai.models", kind),
       // 0.6.24 { shots:[{narration,visual,prompt}], mode:"optimize"|"imitate", reference, aspect } → { ok, prompts }
       rewritePrompts: (input) => ipcRenderer.invoke("video:ai.rewritePrompts", input),
+      refine: (input) => ipcRenderer.invoke("video:ai.refine", input || {}),
       voices: (kind) => ipcRenderer.invoke("video:tts.voices", kind),
     },
     publish: {

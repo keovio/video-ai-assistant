@@ -339,6 +339,31 @@
     renderShots();
 
     const saveBtn = h("button", { class: "btn", onclick: () => saveDraft(root, d) }, "保存分析");
+    // 0.6.51：AI 调整分析结果：分镜、风格、skill 联动改
+    const dataField = (key, label, get, set) => ({ key, label, get, set });
+    const refineBox = window.AiRefine.box({
+      stackKey: d, context: "一份视频分析结果：脚本、分镜（口播/画面描述/生视频提示词）、风格拆解、风格 skill（skill 要通用可复用，不写具体人物和道具）",
+      fields: () => [
+        dataField("title", "脚本标题", () => d.scriptTitle, (v) => { d.scriptTitle = v; }),
+        dataField("narration", "口播全文", () => d.scriptNarration, (v) => { d.scriptNarration = v; }),
+        ...d.shots.flatMap((s, i) => [
+          dataField(`s${i}n`, `第 ${i + 1} 镜口播`, () => s.narration, (v) => { s.narration = v; }),
+          dataField(`s${i}v`, `第 ${i + 1} 镜画面描述`, () => s.visual, (v) => { s.visual = v; }),
+          dataField(`s${i}p`, `第 ${i + 1} 镜生视频提示词`, () => s.imagePrompt, (v) => { s.imagePrompt = v; }),
+        ]),
+        ...STYLE_KEYS.map((k) => dataField(`style_${k}`, `风格·${STYLE_LABELS[k]}`, () => d.style[k], (v) => { d.style[k] = v; })),
+        dataField("skill_desc", "skill 说明", () => d.skill.description, (v) => { d.skill.description = v; }),
+        dataField("skill_prompt", "skill 风格提示词", () => d.skill.prompt, (v) => { d.skill.prompt = v; }),
+        dataField("skill_body", "skill 正文", () => d.skill.body, (v) => { d.skill.body = v; }),
+        dataField("skill_text", "SKILL.md 文本", () => d.skillText, (v) => { d.skillText = v; }),
+      ],
+      onApplied: () => {
+        titleInput.value = d.scriptTitle || ""; narrationInput.value = d.scriptNarration || "";
+        for (const k of STYLE_KEYS) styleInputs[k].value = d.style[k] || "";
+        skillDescInput.value = d.skill.description || ""; skillBodyInput.value = d.skill.body || ""; skillTextArea.value = d.skillText || "";
+        renderShots();
+      },
+    });
     const copyBtn = h("button", { class: "btn", onclick: async () => {
       const text = d.skillText || "";
       if (!text.trim()) { window.Shell.toast("skill 文本是空的", "error"); return; }
@@ -400,6 +425,7 @@
             try { await navigator.clipboard.writeText(v); window.Shell.toast("已复制音乐名", "success"); } catch (err) { window.Shell.toast("复制失败：" + err.message, "error"); }
           } }, "复制"))),
       h("div", { class: "actions sticky-actions" }, importBtn, saveBtn),
+      refineBox,
       h("details", { class: "fold", open: true },
         h("summary", {}, "脚本与分镜"),
         titleInput, h("div", { class: "gap-6" }), narrationInput,
