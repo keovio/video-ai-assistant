@@ -162,10 +162,41 @@
       id: "video-image", title: "人物生图", icon: "image", order: 3.5,
       render(box) {
         box.append(
-          h("p", { class: "muted small-text" }, "作品库 → 角色 里生成三视图和镜头首帧图用。不填也能用：复制提示词和参考图，到即梦网页里自己生成，再导入。"),
-          row("接口地址", "火山方舟图片生成接口；留空表示 https://ark.cn-beijing.volces.com/api/v3", textInput("imageBaseUrl", "https://ark.cn-beijing.volces.com/api/v3"), { stack: true }),
-          row("模型", "Seedream 模型 ID，如 doubao-seedream-4-0-250828、doubao-seedream-4-5-251128；需先在火山方舟开通", textInput("imageModel", "doubao-seedream-4-0-250828"), { stack: true }),
-          keyRow("火山方舟 API Key", "在火山方舟控制台 → API Key 管理 里创建", () => api.video.chars.keyStatus(), (v) => api.video.chars.setKey(v)));
+          h("p", { class: "muted small-text" }, "作品库 → 角色 里生成三视图和镜头首帧图用。不填也能用：复制提示词和参考图，到即梦网页里自己生成，再导入。"));
+        // 0.6.47：服务商 + 模型可选；换服务商时清空模型和地址，用该家的默认值
+        const dyn = h("div", {});
+        box.append(dyn);
+        let info = null;
+        const draw = async () => {
+          if (!info) { const r = await api.video.chars.providers().catch(() => null); info = (r && r.ok && r.providers) || []; }
+          const st = window.Shell.getSettings();
+          const pid = info.some((x) => x.id === st.imageProvider) ? st.imageProvider : "ark";
+          const P = info.find((x) => x.id === pid) || { models: [], base: "", label: pid, keyHint: "" };
+          const provSel = h("select", { class: "input", onchange: async () => {
+            await window.Shell.saveSettings({ imageProvider: provSel.value, imageModel: "", imageBaseUrl: "" });
+            draw();
+          } }, ...info.map((x) => h("option", { value: x.id }, x.label)));
+          provSel.value = pid;
+          const curModel = st.imageModel || (P.models[0] ? P.models[0][0] : "");
+          const isPreset = P.models.some(([m]) => m === curModel);
+          const modelInput = h("input", { class: "input", placeholder: "模型名，如 gpt-image-1", value: curModel,
+            oninput: debounce(() => window.Shell.saveSettings({ imageModel: modelInput.value.trim() }), 300) });
+          modelInput.hidden = P.models.length > 0 && isPreset;
+          const modelSel = h("select", { class: "input", onchange: () => {
+            if (modelSel.value === "__custom") { modelInput.hidden = false; modelInput.value = ""; modelInput.focus(); return; }
+            modelInput.hidden = true; modelInput.value = modelSel.value;
+            window.Shell.saveSettings({ imageModel: modelSel.value }).then(draw);
+          } }, ...P.models.map(([m, l]) => h("option", { value: m }, l)), h("option", { value: "__custom" }, "自定义模型名…"));
+          modelSel.value = isPreset ? curModel : "__custom";
+          modelSel.hidden = !P.models.length;
+          const refsOk = pid === "custom" || (pid === "ark" && !/t2i|seedream-3/i.test(curModel)) || (pid === "openai" && /^gpt-image/i.test(curModel));
+          dyn.replaceChildren(
+            row("服务商", "火山方舟和 OpenAI gpt-image 能带参考图，人物最像；智谱 CogView 只能按文字生成", provSel),
+            row("模型", refsOk ? "这个模型会带上角色的三视图/面部特写当参考图" : "这个模型不支持参考图，只按外貌文字生成，人物可能每次不一样", h("div", { class: "actions" }, modelSel, modelInput), { stack: true }),
+            row("接口地址", `留空用默认 ${P.base || "（其他服务商必须填，如 https://xxx.com/v1）"}`, textInput("imageBaseUrl", P.base || "https://xxx.com/v1"), { stack: true }),
+            keyRow(`${P.label} API Key`, P.keyHint, () => api.video.chars.keyStatus(pid), (v) => api.video.chars.setKey(v, pid)));
+        };
+        draw();
       },
     });
 

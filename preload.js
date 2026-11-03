@@ -154,8 +154,9 @@ contextBridge.exposeInMainWorld("app", {
       prompt: (id, opts) => ipcRenderer.invoke("video:chars.prompt", id, opts || {}),
       describe: (input) => ipcRenderer.invoke("video:chars.describe", input || {}),
       generate: (id, opts) => ipcRenderer.invoke("video:chars.generate", id, opts || {}),
-      keyStatus: () => ipcRenderer.invoke("video:chars.keyStatus"),
-      setKey: (v) => ipcRenderer.invoke("video:chars.setKey", v),
+      keyStatus: (provider) => ipcRenderer.invoke("video:chars.keyStatus", provider),
+      setKey: (v, provider) => ipcRenderer.invoke("video:chars.setKey", v, provider),
+      providers: () => ipcRenderer.invoke("video:chars.providers"),
     },
     library: {
       renders: () => ipcRenderer.invoke("video:library.renders"),

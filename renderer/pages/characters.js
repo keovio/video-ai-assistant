@@ -128,10 +128,11 @@
       const keyR = await C().keyStatus().catch(() => null);
       const hasKey = !!(keyR && keyR.set);
       const genRow = (kind, label) => {
-        const btn = h("button", { class: "btn small primary", disabled: !hasKey, title: hasKey ? "用火山方舟 Seedream 生成" : "设置 → 人物生图 里保存 API Key 后可用", onclick: async () => {
+        const btn = h("button", { class: "btn small primary", disabled: !hasKey, title: hasKey ? "用设置 → 人物生图 里选的服务商和模型生成" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
           btn.disabled = true; btn.textContent = "生成中…（约 20–60 秒）";
           const r = await call(C().generate(cur.id, { kind }), `${label}已生成`);
           btn.disabled = false; btn.textContent = "API 生成";
+          if (r && r.refsIgnored) toast("当前模型不支持参考图，这张只按文字生成；要更像同一个人，换火山方舟 Seedream 4.x 或 gpt-image-1", "error");
           if (r) await drawImages();
         } }, "API 生成");
         return h("div", { class: "char-gen-row" }, h("b", {}, label),
@@ -199,10 +200,11 @@
           h("button", { class: "btn small", onclick: () => call(C().copyImage(sel.value, file), "首帧图已复制，去生成网站粘贴做图生视频") }, "复制图片"),
           h("button", { class: "btn small ghost", onclick: () => C().reveal(sel.value, file) }, "文件夹"))));
     };
-    const genBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "" : "设置 → 人物生图 里保存 API Key 后可用", onclick: async () => {
+    const genBtn = h("button", { class: "btn primary", disabled: !hasKey, title: hasKey ? "用设置 → 人物生图 里选的服务商和模型生成" : "设置 → 人物生图 里选服务商、保存 API Key 后可用", onclick: async () => {
       genBtn.disabled = true; genBtn.textContent = "生成中…（约 20–60 秒）";
       const r = await call(C().generate(sel.value, { kind: "frame", prompt: ta.value, aspect: opts.aspect, note: opts.label || "" }), "首帧图已生成");
       genBtn.disabled = false; genBtn.textContent = "API 生成";
+      if (r && r.refsIgnored) toast("当前模型不支持参考图，这张只按文字生成；要更像同一个人，换火山方舟 Seedream 4.x 或 gpt-image-1", "error");
       if (r) for (const f of r.files) await showFile(f);
     } }, "API 生成");
     const up = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true, onchange: async () => {

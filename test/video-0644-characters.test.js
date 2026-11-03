@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs"); const os = require("os"); const path = require("path");
 const { createCharacterStore, sheetPrompt, framePrompt } = require("../lib/video/characters");
-const seedream = require("../lib/video/seedream");
+const imageGen = require("../lib/video/image-gen");
 
 test("角色库：保存、加图、参考图顺序、删除", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chars-"));
@@ -33,16 +33,57 @@ test("角色提示词：带锚点、去掉镜头里的风格尾巴", () => {
   assert.match(p, /16:9/); assert.match(p, /她转头看镜头/); assert.match(p, /风格：手持/); assert.doesNotMatch(p, /暖光/);
 });
 
-test("Seedream：请求体和返回解析", async () => {
-  let sent = null;
-  const fetchImpl = async (url, init) => { sent = { url, body: JSON.parse(init.body), auth: init.headers.Authorization };
-    return { ok: true, status: 200, text: async () => JSON.stringify({ data: [{ b64_json: Buffer.from("img").toString("base64") }] }) }; };
-  const out = await seedream.generateImage({ fetchImpl, apiKey: "k", prompt: "p", images: ["data:image/jpeg;base64,AAAA", "data:image/png;base64,BBBB"], size: seedream.sizeFor("9:16") });
-  assert.strictEqual(out[0].toString(), "img");
-  assert.match(sent.url, /ark\.cn-beijing\.volces\.com\/api\/v3\/images\/generations$/);
-  assert.strictEqual(sent.body.image.length, 2);
-  assert.strictEqual(sent.body.size, "1440x2560");
-  assert.strictEqual(sent.body.response_format, "b64_json");
-  assert.strictEqual(sent.auth, "Bearer k");
-  await assert.rejects(seedream.generateImage({ fetchImpl, apiKey: "", prompt: "p" }), /API Key/);
+const fakeFetch = (log, reply) => async (url, init = {}) => {
+  log.push({ url, init, body: typeof init.body === "string" ? JSON.parse(init.body) : init.body });
+  if (/\.png$|cdn/.test(url)) return { ok: true, status: 200, arrayBuffer: async () => Buffer.from("dl") };
+  return { ok: true, status: 200, text: async () => JSON.stringify(reply) };
+};
+const b64 = { data: [{ b64_json: Buffer.from("img").toString("base64") }] };
+const refs = ["data:image/jpeg;base64,AAAA", "data:image/png;base64,BBBB"];
+
+test("生图：火山方舟 JSON 带参考图", async () => {
+  const log = [];
+  const out = await imageGen.generateImage({ fetchImpl: fakeFetch(log, b64), provider: "ark", apiKey: "k", prompt: "p", images: refs, size: imageGen.sizeFor("9:16", { provider: "ark" }) });
+  assert.strictEqual(out.images[0].toString(), "img");
+  assert.strictEqual(out.refsUsed, 2);
+  assert.match(log[0].url, /ark\.cn-beijing\.volces\.com\/api\/v3\/images\/generations$/);
+  assert.strictEqual(log[0].body.image.length, 2);
+  assert.strictEqual(log[0].body.size, "1440x2560");
+  assert.strictEqual(log[0].init.headers.Authorization, "Bearer k");
+  await assert.rejects(imageGen.generateImage({ fetchImpl: fakeFetch([], b64), apiKey: "", prompt: "p" }), /API Key/);
+});
+
+test("生图：智谱只文生图，返回 url 再下载", async () => {
+  const log = [];
+  const out = await imageGen.generateImage({ fetchImpl: fakeFetch(log, { data: [{ url: "https://cdn.x/a.png" }] }), provider: "zhipu", apiKey: "k", prompt: "p", images: refs, size: imageGen.sizeFor("16:9", { provider: "zhipu" }) });
+  assert.strictEqual(out.images[0].toString(), "dl");
+  assert.strictEqual(out.refsIgnored, true);
+  assert.match(log[0].url, /open\.bigmodel\.cn\/api\/paas\/v4\/images\/generations$/);
+  assert.strictEqual(log[0].body.model, "cogview-4-250304");
+  assert.strictEqual(log[0].body.size, "1344x768");
+  assert.strictEqual(log[0].body.image, undefined);
+});
+
+test("生图：OpenAI gpt-image 有参考图走 edits，dall-e-3 只文生图", async () => {
+  const log = [];
+  await imageGen.generateImage({ fetchImpl: fakeFetch(log, b64), provider: "openai", model: "gpt-image-1", apiKey: "k", prompt: "p", images: refs, size: "1024x1536" });
+  assert.match(log[0].url, /api\.openai\.com\/v1\/images\/edits$/);
+  assert.ok(log[0].init.body instanceof FormData);
+  assert.strictEqual(log[0].init.body.getAll("image[]").length, 2);
+  const log2 = [];
+  const out = await imageGen.generateImage({ fetchImpl: fakeFetch(log2, b64), provider: "openai", model: "dall-e-3", apiKey: "k", prompt: "p", images: refs });
+  assert.match(log2[0].url, /images\/generations$/);
+  assert.strictEqual(log2[0].body.response_format, "b64_json");
+  assert.strictEqual(log2[0].body.size, "1024x1024");
+  assert.strictEqual(out.refsIgnored, true);
+  assert.strictEqual(imageGen.sizeFor("9:16", { provider: "openai", model: "dall-e-3" }), "1024x1792");
+  assert.strictEqual(imageGen.sizeFor("", { provider: "openai", kind: "sheet" }), "1536x1024");
+});
+
+test("生图：其他服务商必须填地址", async () => {
+  await assert.rejects(imageGen.generateImage({ fetchImpl: fakeFetch([], b64), provider: "custom", apiKey: "k", prompt: "p", model: "x" }), /接口地址/);
+  const log = [];
+  await imageGen.generateImage({ fetchImpl: fakeFetch(log, b64), provider: "custom", baseUrl: "https://relay.example.com/v1/", apiKey: "k", prompt: "p", model: "nano-banana", images: refs.slice(0, 1) });
+  assert.strictEqual(log[0].url, "https://relay.example.com/v1/images/generations");
+  assert.strictEqual(log[0].body.image, refs[0]);
 });

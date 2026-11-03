@@ -73,8 +73,9 @@ const settings = createSettings({ file: path.join(DATA_DIR, "settings.json"), sc
   // AI 文本分析（M4：抖音分析用 OpenAI 兼容 chat completions；Key 走 secrets 存储，不进 settings.json）
   aiBaseUrl: { type: "string", maxLength: 500, default: "" },
   aiModel: { type: "string", maxLength: 128, default: "gpt-4o-mini" },
-  imageBaseUrl: { type: "string", maxLength: 500, default: "" }, // 0.6.44：人物生图（火山方舟 Seedream），留空用北京区默认
-  imageModel: { type: "string", maxLength: 128, default: "doubao-seedream-4-0-250828" },
+  imageProvider: { type: "enum", values: ["ark", "zhipu", "openai", "custom"], default: "ark" }, // 0.6.47：人物生图服务商
+  imageBaseUrl: { type: "string", maxLength: 500, default: "" }, // 留空用服务商默认地址
+  imageModel: { type: "string", maxLength: 128, default: "" }, // 留空用服务商默认模型
 } });
 const logger = createLogger({ dir: path.join(DATA_DIR, "logs"), level: settings.get("logLevel"), echo: !app.isPackaged || SMOKE });
 const tasks = createTaskManager({ concurrency: 2, logger });
@@ -1043,8 +1044,10 @@ setupVideoIpc({
   tasks,
   logger,
   secrets: ttsSecrets,
-  getImageSettings: () => ({ imageBaseUrl: settings.get("imageBaseUrl"), imageModel: settings.get("imageModel") }),
-  getImageKey: () => ttsSecrets.get("imageApiKey"),
+  getImageSettings: () => ({ imageProvider: settings.get("imageProvider"), imageBaseUrl: settings.get("imageBaseUrl"), imageModel: settings.get("imageModel") }),
+  // 智谱/OpenAI 没单独填生图 Key 时，若 AI 分析用的是同一家，就借用 AI 分析的 Key
+  getImageKey: (p = "ark") => ttsSecrets.get("imageApiKey." + p) || (p === "ark" ? ttsSecrets.get("imageApiKey") : "")
+    || ((p === "zhipu" && /bigmodel\.cn/i.test(settings.get("aiBaseUrl") || "")) || (p === "openai" && /api\.openai\.com/i.test(settings.get("aiBaseUrl") || "https://api.openai.com")) ? ttsSecrets.get("aiApiKey") : ""),
   imageFetchImpl: makeFetch(Math.max(AI_TIMEOUT_MS, 180000)),
   copyImage: (p) => { const { clipboard, nativeImage } = require("electron"); clipboard.writeImage(nativeImage.createFromPath(p)); },
 });
