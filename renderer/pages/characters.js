@@ -35,6 +35,18 @@
     return null;
   };
   const copy = async (text, msg) => { try { await navigator.clipboard.writeText(text); toast(msg, "success"); } catch (e) { toast("复制失败：" + e.message, "error"); } };
+  // 0.6.61：照片先缩到长边 1280、转 JPEG 再发给 AI（手机原图十几 MB 会让 AI 卡到超时）
+  const shrinkImage = (dataUrl, max = 1280) => new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+      const cv = document.createElement("canvas"); cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      try { res(cv.toDataURL("image/jpeg", 0.88)); } catch { res(dataUrl); }
+    };
+    img.onerror = () => res(dataUrl);
+    img.src = dataUrl;
+  });
   const readFile = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
   const whoText = (c) => (c ? [c.anchor && `外貌：${c.anchor}`, c.outfit && `服装：${c.outfit}`].filter(Boolean).join("；") : "");
   const projectChar = {
@@ -47,12 +59,13 @@
     return cache[type];
   }
   function modal(title, ...children) {
-    const close = () => overlay.remove();
+    const api0 = { beforeClose: null };
+    const close = async () => { if (api0.beforeClose && !(await api0.beforeClose())) return; overlay.remove(); };
     const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) modalNudge(overlay); } },
       h("div", { class: "modal modal-form modal-wide modal-char", role: "dialog" }, h("h2", {}, title), ...children,
         h("div", { class: "actions end" }, h("button", { class: "btn", onclick: close }, "关闭"))));
     document.body.append(overlay);
-    return { overlay, close };
+    return Object.assign(api0, { overlay, close });
   }
   // 去合成导出页右边浏览器，新开即梦标签
   function openJimeng() {
@@ -108,10 +121,18 @@
     const photo = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true });
     let photoUrl = "";
     const photoBtn = h("button", { class: "btn small", onclick: () => photo.click() }, "选照片");
-    photo.onchange = async () => { const f = photo.files && photo.files[0]; if (!f) return; photoUrl = await readFile(f); photoBtn.textContent = "已选照片 ✓"; };
+    photo.onchange = async () => { const f = photo.files && photo.files[0]; if (!f) return; photoUrl = await shrinkImage(await readFile(f)); photoBtn.textContent = "已选照片 ✓"; };
+    // 生成中：显示已用时间、可取消；关弹窗前确认（关了就取消）
+    let busy = false, tick = null;
+    const status = h("div", { class: "muted small-text", hidden: true });
+    const stopBtn = h("button", { class: "btn small ghost", hidden: true, onclick: () => C().cancelDescribe().catch(() => {}) }, "取消");
     const aiBtn = h("button", { class: "btn small", onclick: async () => {
-      aiBtn.disabled = true; aiBtn.textContent = "AI 写中…";
+      busy = true; aiBtn.disabled = true; aiBtn.textContent = "AI 写中…"; stopBtn.hidden = false; status.hidden = false;
+      const t0 = Date.now();
+      const draw = () => { status.textContent = `AI 正在${photoUrl ? "看照片并" : ""}写，已用 ${Math.round((Date.now() - t0) / 1000)} 秒（最多 2 分钟）。请先别关弹窗，关掉会取消；进度在运行日志里。`; };
+      draw(); tick = setInterval(draw, 1000);
       const r = await call(C().describe({ text: desc.value.trim(), image: photoUrl, type }));
+      clearInterval(tick); busy = false; status.hidden = true; stopBtn.hidden = true;
       aiBtn.disabled = false; aiBtn.textContent = "AI 帮我写";
       if (!r) return;
       if (r.name && !name.value.trim()) name.value = r.name;
@@ -136,7 +157,8 @@
     const m = modal(cur ? `${T.word}：${cur.name}` : "新建" + T.word,
       h("div", { class: "char-form" },
         h("label", {}, h("span", { class: "small-text" }, "名字"), name),
-        h("div", { class: "row" }, desc, photoBtn, aiBtn, photo),
+        h("div", { class: "row" }, desc, photoBtn, aiBtn, stopBtn, photo),
+        status,
         h("label", {}, h("span", { class: "small-text" }, T.aLabel), anchor),
         h("label", {}, h("span", { class: "small-text" }, T.oLabel), outfit),
         window.AiRefine.box({ stackKey: cur || anchor, context: T.refineCtx, placeholder: T.refinePh,
@@ -144,6 +166,11 @@
           flash: (k) => ({ anchor, outfit })[k] }),
         ),
       genBox, imgs);
+    m.beforeClose = async () => {
+      if (!busy) return true;
+      if (!await window.Shell.confirm("AI 还在写，关闭弹窗会取消这次生成，确定关闭吗？")) return false;
+      C().cancelDescribe().catch(() => {}); clearInterval(tick); return true;
+    };
     // 0.6.49：保存/删除放到固定的底部按钮栏
     const foot = m.overlay.querySelector(".modal > .actions.end");
     if (foot) foot.prepend(delBtn, h("span", { class: "spacer" }), saveBtn);

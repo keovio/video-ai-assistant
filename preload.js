@@ -155,6 +155,7 @@ contextBridge.exposeInMainWorld("app", {
       reveal: (id, file) => ipcRenderer.invoke("video:chars.reveal", id, file || ""),
       prompt: (id, opts) => ipcRenderer.invoke("video:chars.prompt", id, opts || {}),
       describe: (input) => ipcRenderer.invoke("video:chars.describe", input || {}),
+      cancelDescribe: () => ipcRenderer.invoke("video:chars.cancelDescribe"),
       generate: (id, opts) => ipcRenderer.invoke("video:chars.generate", id, opts || {}),
       keyStatus: (provider) => ipcRenderer.invoke("video:chars.keyStatus", provider),
       setKey: (v, provider) => ipcRenderer.invoke("video:chars.setKey", v, provider),
