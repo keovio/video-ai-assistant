@@ -21,3 +21,8 @@ test("0.6.60 默认按国内审美写人脸", () => {
   assert.match(facePrompt({ anchor: "长发" }), /国内审美/);
   assert.doesNotMatch(facePrompt({ anchor: "长发" }, { refs: 1 }), /国内审美/);
 });
+
+test("0.6.63 提示词不限字数", () => {
+  const sys = ai.buildRewritePrompt({ shots: [{ visual: "x" }] })[0].content;
+  assert.match(sys, /不限字数/); assert.doesNotMatch(sys, /250–500/);
+});
