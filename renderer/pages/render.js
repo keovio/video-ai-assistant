@@ -204,7 +204,7 @@
     const promptOf = (s) => {
       let p = basePrompt(s); const st = styleText(); const who = charText();
       if (p && who) p = `人物（${curChar().name}，全片同一人）：${who}\n${p}`;
-      return p && st && !/风格[:：]/.test(p) ? `${p}\n风格：${st}` : p;
+      return p && st && !/风格[:：】]/.test(p) ? `${p}\n风格：${st}` : p;
     };
     const copyText = async (text, okMsg) => {
       if (!text) { window.Shell.toast("没有可复制的画面提示词，先去分镜编辑里写画面描述", "error"); return; }

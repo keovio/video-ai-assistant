@@ -87,7 +87,7 @@ test("分析结果校验：规范化、秒数兜底、skill 名清洗、缺字�
   const v = validateAnalysis(JSON.parse(JSON.stringify(VALID_RAW)));
   assert.equal(v.skill.name, "melancholic-cinematic");
   assert.equal(v.script.shots[0].seconds, 3);
-  assert.match(v.script.shots[1].imagePrompt, /^空无一人的路灯下\n风格：/); // imagePrompt 缺省时用 visual，0.6.28 末尾补整体风格
+  assert.match(v.script.shots[1].imagePrompt, /^空无一人的路灯下\n【风格】/); // imagePrompt 缺省时用 visual，0.6.28 末尾补整体风格
   assert.ok(v.script.shots[1].seconds > 0 && v.script.shots[1].seconds <= 30);
   assert.equal(v.style.visual, "电影感");
 
