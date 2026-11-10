@@ -253,9 +253,9 @@
     const shotsCard = h("section", { class: "side-card" },
       h("h3", {}, h("span", { class: "grow" }, "每镜画面"), h("span", { class: "muted small-text" }, `${withClip}/${shots.length} 有片段`),
         shots.length ? h("button", { class: "btn small", title: "按“第 N 镜：提示词”一行一镜复制全部", onclick: () => {
-          const lines = shots.map((x, k) => basePrompt(x) ? `第 ${k + 1} 镜（${fmt(x.end - x.start)}）：${basePrompt(x)}` : "").filter(Boolean);
-          const st = styleText();
-          copyText((st ? `整体风格：${st}\n\n` : "") + lines.join("\n\n"), `已复制 ${lines.length} 镜画面提示词${st ? "（带风格）" : ""}`);
+          const st = styleText(); const ch = curChar();
+          const r = window.PromptCopy.all({ shots: shots.map((x) => ({ prompt: basePrompt(x), seconds: x.end - x.start })), who: charText(), whoName: ch ? ch.name : "", style: st });
+          copyText(r.text, `已复制 ${r.count} 镜画面提示词${[ch ? "带人物" : "", st ? "带风格" : ""].filter(Boolean).join("、").replace(/^(.+)$/, "（$1）")}`);
         } }, "全部复制") : ""),
       skillList.length ? h("label", { class: "row style-skill-row" }, h("span", { class: "small-text" }, "风格 skill"),
         (() => {

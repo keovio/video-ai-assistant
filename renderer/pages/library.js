@@ -299,7 +299,7 @@
         a.scriptNarration ? h("h3", {}, "口播") : null,
         a.scriptNarration ? h("p", { class: "small-text" }, a.scriptNarration) : null,
         h("h3", {}, h("span", { class: "grow" }, "分镜"),
-          shots.length ? h("button", { class: "btn small", onclick: () => copy(shots.map((s, i) => promptOf(s) ? `第 ${i + 1} 镜（${s.seconds || 0} 秒）：${promptOf(s)}` : "").filter(Boolean).join("\n\n"), "已复制全部画面提示词") }, "全部复制") : null),
+          shots.length ? h("button", { class: "btn small", onclick: () => { const r = window.PromptCopy.all({ shots: shots.map((s) => ({ prompt: promptOf(s), seconds: s.seconds })) }); copy(r.text, `已复制 ${r.count} 镜画面提示词`); } }, "全部复制") : null),
         ...shots.map((s, i) => h("div", { class: "an-shot" },
           h("div", { class: "an-shot-head" }, h("b", {}, `第 ${i + 1} 镜`), h("span", { class: "chip" }, `${s.seconds || 0} 秒`), h("span", { class: "grow" }),
             promptOf(s) ? h("button", { class: "btn small", onclick: () => copy(promptOf(s), `第 ${i + 1} 镜提示词已复制`) }, "复制") : null),
